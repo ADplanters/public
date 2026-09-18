@@ -1,209 +1,251 @@
 """
 # main.py for image_to_pdf project
+# Production-Ready High-Precision YouTube Shorts Thumbnail & PDF Generator
 
 Required Dependencies:
 pip install pillow reportlab python-dotenv
+
+requirements.txt:
+pillow>=10.0.0
+reportlab>=4.0.0
+python-dotenv>=1.0.0
 """
 
 import os
 import sys
 import logging
+import urllib.request
+import ssl
 from pathlib import Path
 
-# 보안을 위한 .env 환경 변수 로드 라이브러리
+# 환경변수 로드
 try:
     from dotenv import load_dotenv
+    load_dotenv()
 except ImportError:
-    print("Error: 'python-dotenv' module not found.")
-    print("Please install it using: pip install python-dotenv")
-    sys.exit(1)
+    pass
 
-# 이미지 및 PDF 처리를 위한 라이브러리
+# 이미지 및 PDF 처리 라이브러리
 try:
-    from PIL import Image, ImageDraw, ImageFont
+    from PIL import Image, ImageDraw, ImageFont, ImageFilter
     from reportlab.pdfgen import canvas
     from reportlab.lib.pagesizes import A4
-    from reportlab.lib.units import inch  # 올바른 소문자 'inch' 임포트
+    from reportlab.lib.units import inch
 except ImportError as e:
     print(f"Error: Required library not found - {e}")
-    print("Please install dependencies: pip install pillow reportlab")
+    print("Please install dependencies: pip install pillow reportlab python-dotenv")
     sys.exit(1)
 
-# --- 1. 로깅 및 환경 설정 ---
+# --- 1. 로깅 및 경로 설정 ---
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
 )
-logger = logging.getLogger("Image2PDF_Generator")
+logger = logging.getLogger("ShortsThumbnailPrecision")
 
-# 실행 파일(main.py) 기준 절대 경로 설정 (GitHub 및 로컬 터미널 환경 호환)
 BASE_DIR = Path(__file__).resolve().parent
 ENV_PATH = BASE_DIR / '.env'
-OUTPUT_IMG_DIR = BASE_DIR / 'images'
-OUTPUT_PDF_PATH = BASE_DIR / 'output.pdf'
+OUTPUT_IMG_PATH = BASE_DIR / 'shorts_thumbnail.png'
+OUTPUT_PDF_PATH = BASE_DIR / 'shorts_thumbnail.pdf'
+FONT_PATH = BASE_DIR / 'NanumGothicBold.ttf'
 
-# 이미지 저장 디렉토리 생성
-OUTPUT_IMG_DIR.mkdir(parents=True, exist_ok=True)
-
-# --- 2. 보안 지침: .env 파일 로드 ---
-def load_api_key():
-    """
-    .env 파일에서 API_KEY를 안전하게 로드합니다.
-    """
-    if not ENV_PATH.exists():
-        logger.error(f".env file not found at {ENV_PATH}")
-        logger.info("Please create a .env file in the same directory as main.py and add: API_KEY=your_actual_key_here")
-        return None
-
-    # .env 파일 로드
-    load_dotenv(dotenv_path=ENV_PATH)
-    
-    # OS 환경 변수에서 Key 가져오기
-    api_key = os.environ.get('API_KEY')
-    
-    if not api_key or api_key == 'your_actual_api_key_here':
-        logger.warning("API_KEY is missing or invalid in .env file.")
-        return None
-    
-    # 보안상 Key의 일부만 로그에 출력
-    logger.info(f"API Key loaded successfully: {api_key[:4]}****")
-    return api_key
-
-# --- 3. 고해상도 이미지 생성 ---
-def generate_high_res_image(api_key, filename='generated_plot.png'):
-    """
-    PIL을 사용하여 고해상도(300 DPI) 로컬 이미지를 생성합니다.
-    """
-    logger.info("Generating high-resolution image...")
-    img_path = OUTPUT_IMG_DIR / filename
-    
-    # 설정: 300 DPI 기준 고해상도 이미지 생성 (10인치 x 8인치)
-    width_inch, height_inch = 10, 8
-    dpi = 300
-    width_px, height_px = width_inch * dpi, height_inch * dpi # 3000x2400
-    
-    try:
-        # 이미지 객체 생성 (RGB mode, White background)
-        image = Image.new('RGB', (width_px, height_px), color=(255, 255, 255))
-        draw = ImageDraw.Draw(image)
-        
-        # 폰트 로드 시도
-        font = None
+# --- 2. 한글 폰트 자동 확보 ---
+def ensure_korean_font():
+    """고해상도 텍스트 렌더링을 위한 나눔고딕 Bold 폰트 다운로드"""
+    if not FONT_PATH.exists():
+        logger.info("Downloading NanumGothic Bold font...")
+        url = "https://github.com/google/fonts/raw/main/ofl/nanumgothic/NanumGothic-Bold.ttf"
         try:
-            if sys.platform == "win32":
-                font_path = "arial.ttf"
-            elif sys.platform == "darwin":
-                font_path = "/Library/Fonts/Arial.ttf"
-            else:
-                font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-            font = ImageFont.truetype(font_path, 80)
-        except Exception:
-            logger.warning("System TrueType font not found, using default font.")
-            font = ImageFont.load_default()
+            context = ssl._create_unverified_context()
+            with urllib.request.urlopen(url, context=context) as response, open(FONT_PATH, 'wb') as out_file:
+                out_file.write(response.read())
+            logger.info("Font downloaded successfully.")
+        except Exception as e:
+            logger.error(f"Failed to download font: {e}")
+            return None
+    return str(FONT_PATH)
 
-        # 텍스트 내용
-        title_text = "Image2PDF Generator v1.0"
-        status_text = "Status: API Key Security Check Passed"
-        key_hint_text = f"Key hint: {api_key[:4]}..." if api_key else "No Key Loaded"
-        
-        # 그래픽 요소
-        draw.rectangle([100, 100, width_px - 100, height_px - 100], outline=(0, 0, 0), width=15)
-        draw.ellipse([width_px // 2 - 200, height_px // 2 - 200, width_px // 2 + 200, height_px // 2 + 200], fill=(70, 130, 180))
+# --- 3. 입력 이미지 자동 탐색 ---
+def find_input_image():
+    """image_21.jpg, image_21.png 등 로컬 이미지 자동 검색"""
+    possible_names = ['image_21.jpg', 'image_21.png', 'image_21.jpeg', 'image_dfd981.jpg']
+    for name in possible_names:
+        candidate = BASE_DIR / name
+        if candidate.exists():
+            logger.info(f"Found target input image: {candidate.name}")
+            return candidate
+            
+    # 폴더 내 가용 이미지 탐색
+    for file in BASE_DIR.iterdir():
+        if file.is_file() and file.suffix.lower() in ['.jpg', '.jpeg', '.png', '.webp']:
+            if 'thumbnail' not in file.name and 'banner' not in file.name:
+                logger.info(f"Auto-selected image: {file.name}")
+                return file
+    return None
 
-        # Pillow 10+ 호환 텍스트 크기 계산 함수
-        def draw_centered_text(y_pos, text, fill_color):
-            try:
-                bbox = draw.textbbox((0, 0), text, font=font)
-                w = bbox[2] - bbox[0]
-            except AttributeError:
-                w, _ = draw.textsize(text, font=font)
-            draw.text(((width_px - w) // 2, y_pos), text, fill=fill_color, font=font)
+# --- 4. 텍스트 너비 자동 맞춤 (글자 잘림 차단) ---
+def get_fitted_font(font_path, text, max_width, initial_size, min_size=18):
+    """지정한 가로 너비(max_width)를 넘지 않도록 폰트 크기를 자동 조절"""
+    size = initial_size
+    while size >= min_size:
+        font = ImageFont.truetype(font_path, size)
+        bbox = font.getbbox(text)
+        w = bbox[2] - bbox[0]
+        if w <= max_width:
+            return font, w, bbox[3] - bbox[1]
+        size -= 2
+    font = ImageFont.truetype(font_path, min_size)
+    bbox = font.getbbox(text)
+    return font, bbox[2] - bbox[0], bbox[3] - bbox[1]
 
-        # 텍스트 그리기
-        draw_centered_text(200, title_text, (0, 0, 0))
-        draw_centered_text(height_px - 400, status_text, (0, 128, 0))
-        draw_centered_text(height_px - 300, key_hint_text, (220, 20, 60))
+def draw_text_with_stroke_and_shadow(draw, pos, text, font, fill_color, stroke_color, stroke_width=5):
+    """그림자 + 외곽선이 적용된 고가독성 텍스트 그리기"""
+    x, y = pos
+    # 그림자 (Shadow)
+    draw.text((x + 4, y + 4), text, font=font, fill=(0, 0, 0, 180))
+    # 외곽선 (Stroke)
+    for dx in range(-stroke_width, stroke_width + 1):
+        for dy in range(-stroke_width, stroke_width + 1):
+            if dx * dx + dy * dy <= stroke_width * stroke_width:
+                draw.text((x + dx, y + dy), text, font=font, fill=stroke_color)
+    # 메인 텍스트
+    draw.text((x, y), text, font=font, fill=fill_color)
 
-        # 고해상도 저장
-        image.save(img_path, dpi=(dpi, dpi), quality=100)
-        
-        logger.info(f"High-res image saved to: {img_path} ({width_px}x{height_px}, {dpi} DPI)")
-        return img_path
-
-    except Exception as e:
-        logger.error(f"Failed to generate image: {e}")
-        return None
-
-# --- 4. 이미지를 PDF로 변환 (고해상도 유지) ---
-def convert_image_to_pdf(img_path, pdf_path):
-    """
-    PIL 이미지를 ReportLab 캔버스에 그려서 고해상도 PDF를 생성합니다.
-    """
-    logger.info(f"Converting {img_path.name} to PDF...")
+# --- 5. 쇼츠 썸네일 생성 메인 함수 ---
+def generate_precision_thumbnail(font_path, input_img_path):
+    logger.info("Generating precision-fitted Shorts Thumbnail...")
     
     try:
-        with Image.open(img_path) as img:
-            img_width, img_height = img.size
-            img_dpi = img.info.get('dpi', (72, 72))[0]
+        with Image.open(input_img_path) as base_img:
+            base_img = base_img.convert('RGB')
+            width, height = base_img.size
+            logger.info(f"Image Resolution: {width}x{height}")
 
-        a4_w, a4_h = A4
-        c = canvas.Canvas(str(pdf_path), pagesize=A4)
-        
-        # 인치 단위 크기 계산
-        img_width_inch = img_width / img_dpi
-        img_height_inch = img_height / img_dpi
-        
-        # 여백 설정 (0.5인치)
-        margin = 0.5 * inch
-        avail_w = a4_w - (2 * margin)
-        avail_h = a4_h - (2 * margin)
-        
-        # 스케일 비율 계산
-        scale = min(avail_w / (img_width_inch * inch), avail_h / (img_height_inch * inch))
-        
-        draw_w = img_width_inch * inch * scale
-        draw_h = img_height_inch * inch * scale
-        
-        x_centered = (a4_w - draw_w) / 2
-        y_centered = (a4_h - draw_h) / 2
-        
-        c.drawImage(str(img_path), x_centered, y_centered, width=draw_w, height=draw_h, preserveAspectRatio=True, mask='auto')
-        
-        c.showPage()
-        c.save()
-        
-        logger.info(f"High-res PDF successfully generated at: {pdf_path}")
-        return True
+            # 가로 여백 안전선 (좌우 7% 여백 확보하여 잘림 원천 차단)
+            max_text_w = int(width * 0.86)
+
+            # 1. 배경 어두운 그라데이션 적용 (기존 배경 글자 가림 및 가독성 확보)
+            overlay = Image.new('RGBA', (width, height), (0, 0, 0, 0))
+            overlay_draw = ImageDraw.Draw(overlay)
+            
+            # 상단 50% 영역에 어두운 그래디언트 딥 차단막 적용
+            gradient_height = int(height * 0.52)
+            for i in range(gradient_height):
+                alpha = int(220 * (1 - (i / gradient_height) ** 1.5))
+                overlay_draw.line([(0, i), (width, i)], fill=(0, 0, 0, alpha))
+
+            base_img = Image.alpha_composite(base_img.convert('RGBA'), overlay).convert('RGB')
+            draw = ImageDraw.Draw(base_img)
+
+            # 2. 상단 긴급 진단 뱃지 (배경 글자 완전 마스킹)
+            badge_text = "🔥 매장 매출 정체 긴급 진단"
+            badge_font, bw, bh = get_fitted_font(font_path, badge_text, max_text_w - 40, int(height * 0.034))
+            
+            pad_x, pad_y = 28, 16
+            bx = (width - bw) // 2
+            by = int(height * 0.05)
+
+            # 주황색 라운드 뱃지 박스
+            badge_box = [bx - pad_x, by - pad_y, bx + bw + pad_x, by + bh + pad_y]
+            draw.rectangle(badge_box, fill=(235, 95, 25))
+            draw.text((bx, by - 2), badge_text, fill=(255, 255, 255), font=badge_font)
+
+            # 3. 메인 타이틀 (3줄 분할로 가로 압박 해제 및 임팩트 극대화)
+            title_lines = [
+                ("우리 매장만", (255, 220, 0)),        # 노란색 강조
+                ("손님이 없는", (255, 255, 255)),     # 흰색
+                ("진짜 이유?!", (255, 220, 0))       # 노란색 강조
+            ]
+
+            start_y = by + bh + int(height * 0.045)
+            line_gap = int(height * 0.015)
+            stroke_w = max(3, int(width * 0.008))
+
+            curr_y = start_y
+            for line_text, color in title_lines:
+                # 각 줄마다 좌우 박스 범위를 절대 넘지 않도록 자동 스케일링
+                line_font, lw, lh = get_fitted_font(font_path, line_text, max_text_w, int(height * 0.065))
+                lx = (width - lw) // 2
+                draw_text_with_stroke_and_shadow(
+                    draw, (lx, curr_y), line_text, line_font, color, (0, 0, 0), stroke_width=stroke_w
+                )
+                curr_y += lh + line_gap
+
+            # 4. 하단 서브 키워드 뱃지
+            sub_text = "📍 플레이스 마케팅 전문"
+            sub_font, sw, sh = get_fitted_font(font_path, sub_text, max_text_w, int(height * 0.036))
+            sx = (width - sw) // 2
+            sy = curr_y + int(height * 0.015)
+            
+            draw_text_with_stroke_and_shadow(
+                draw, (sx, sy), sub_text, sub_font, (220, 240, 255), (0, 0, 0), stroke_width=max(2, stroke_w - 2)
+            )
+
+            # 고해상도 저장
+            base_img.save(OUTPUT_IMG_PATH, format="PNG", quality=100)
+            logger.info(f"High-Precision Thumbnail Image saved: {OUTPUT_IMG_PATH}")
+            return OUTPUT_IMG_PATH
 
     except Exception as e:
-        logger.error(f"Failed to convert to PDF: {e}")
+        logger.error(f"Failed to generate thumbnail: {e}", exc_info=True)
+        return None
+
+# --- 6. PDF 변환 ---
+def compile_pdf(image_path, output_path):
+    """고해상도 PDF 변환"""
+    if not image_path or not image_path.exists():
+        return False
+        
+    logger.info("Converting Thumbnail image to PDF...")
+    try:
+        c = canvas.Canvas(str(output_path), pagesize=A4)
+        a4_w, a4_h = A4
+        
+        with Image.open(image_path) as img:
+            img_w, img_h = img.size
+            
+            margin = 0.4 * inch
+            avail_w = a4_w - (2 * margin)
+            avail_h = a4_h - (2 * margin)
+            
+            scale = min(avail_w / img_w, avail_h / img_h)
+            draw_w = img_w * scale
+            draw_h = img_h * scale
+            
+            x_centered = (a4_w - draw_w) / 2
+            y_centered = (a4_h - draw_h) / 2
+            
+            c.drawImage(str(image_path), x_centered, y_centered, width=draw_w, height=draw_h, preserveAspectRatio=True, mask='auto')
+            c.showPage()
+            
+        c.save()
+        logger.info(f"PDF successfully created: {output_path}")
+        return True
+    except Exception as e:
+        logger.error(f"PDF generation failed: {e}")
         return False
 
-# --- 5. 메인 실행 흐름 ---
+# --- 7. 메인 실행 흐름 ---
 if __name__ == "__main__":
-    logger.info("Starting Image2PDF Production Pipeline")
+    logger.info("=== Starting Precision Shorts Thumbnail Pipeline ===")
     
-    api_key = load_api_key()
-    if not api_key:
-        logger.warning("Proceeding with placeholder content due to missing API Key.")
-        api_key = "NO_KEY_SAFE_MODE"
-
-    generated_img_path = generate_high_res_image(api_key, 'final_report_visual.png')
+    font_path = ensure_korean_font()
+    input_img_path = find_input_image()
     
-    if generated_img_path and generated_img_path.exists():
-        success = convert_image_to_pdf(generated_img_path, OUTPUT_PDF_PATH)
+    if not input_img_path:
+        logger.critical("Input image file not found. Please ensure image_21.jpg exists in folder.")
+        sys.exit(1)
         
-        if success:
-            try:
-                os.remove(generated_img_path)
-                logger.info("Temporary image file removed.")
-                if not any(OUTPUT_IMG_DIR.iterdir()):
-                    OUTPUT_IMG_DIR.rmdir()
-                    logger.info("Temporary images directory removed.")
-            except OSError as e:
-                logger.warning(f"Failed to remove temporary files: {e}")
-    else:
-        logger.critical("Pipeline failed: Image was not generated.")
-
-    logger.info("Pipeline finished. Check for 'output.pdf' in the current folder.")
+    if font_path and input_img_path:
+        out_img = generate_precision_thumbnail(font_path, input_img_path)
+        if out_img:
+            success = compile_pdf(out_img, OUTPUT_PDF_PATH)
+            if success:
+                logger.info("=== Pipeline Completed Successfully! ===")
+                logger.info(f"Generated Image: {out_img.name}")
+                logger.info(f"Generated PDF: {OUTPUT_PDF_PATH.name}")
+            else:
+                logger.error("PDF Compilation Failed.")
+        else:
+            logger.critical("Thumbnail Generation Failed.")
