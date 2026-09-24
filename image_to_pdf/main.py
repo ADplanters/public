@@ -1,239 +1,154 @@
+"""
+=============================================================================
+[애드플랜터스 추석 인사 카드 - 강아지 '고리' 이름 추가 스크립트]
+실행 환경: VS Code Tunnel / GitHub Public Repository (image_to_pdf 폴더 내)
+필요 패키지: pip install pypdf reportlab
+=============================================================================
+"""
+
 import os
 import sys
-import math
 import logging
 from pathlib import Path
-from datetime import datetime
-from typing import Tuple, Optional
-import numpy as np
-from PIL import Image, ImageDraw, ImageFont
-from reportlab.pdfgen import canvas
-
-# 필수 라이브러리 체크
-try:
-    import fitz  # PyMuPDF
-except ImportError:
-    print("[오류] PyMuPDF가 설치되어 있지 않습니다. 'pip install pymupdf'를 실행해주세요.")
-    sys.exit(1)
-
-try:
-    from tqdm import tqdm
-except ImportError:
-    def tqdm(iterable, desc="", **kwargs):
-        print(f"--> {desc} 작업 진행 중...")
-        return iterable
-
-# --- 경로 및 기본 설정 ---
-BASE_DIR = Path(__file__).resolve().parent
-OUTPUT_DIR = BASE_DIR / "output"
-OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-
-DPI = 300  # 고해상도 품질 (300 DPI)
-INPUT_PDF = BASE_DIR / "애드플랜터스_추석_인사_카드_highres.pdf"
-TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
-OUTPUT_PDF = OUTPUT_DIR / f"modified_카드_고리추가_{TIMESTAMP}.pdf"
+from io import BytesIO
 
 # 로깅 설정
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)]
-)
-logger = logging.getLogger("Image2PDF")
+logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+
+try:
+    from pypdf import PdfReader, PdfWriter
+    from reportlab.pdfgen import canvas
+    from reportlab.pdfbase.ttfonts import TTFont
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.lib.colors import HexColor, white
+except ImportError:
+    logging.error("필수 패키지가 설치되지 않았습니다. 터미널에서 다음을 실행하세요: pip install pypdf reportlab")
+    sys.exit(1)
 
 
-def find_best_font(size: int) -> ImageFont.FreeTypeFont:
-    """
-    1. 실행 폴더 내에 별도로 추가된 .ttf / .otf 폰트 파일 우선 탐색
-    2. OS 시스템 한글 폰트(맑은 고딕 Bold 등) 탐색
-    """
-    # 1. 스크립트 폴더 내 사용자 지정 폰트 우선 검색
-    local_fonts = list(BASE_DIR.glob("*.ttf")) + list(BASE_DIR.glob("*.otf"))
-    for font_file in local_fonts:
-        try:
-            logger.info(f"사용자 폰트 적용: {font_file.name}")
-            return ImageFont.truetype(str(font_file), size)
-        except Exception:
-            continue
+# =============================================================================
+# 1. 경로 및 환경 설정 (절대 경로 기반의 상대적 위치 계산)
+# =============================================================================
+BASE_DIR = Path(__file__).resolve().parent
+INPUT_PDF = BASE_DIR / "애드플랜터스_추석_인사_카드_highres.pdf"
+OUTPUT_PDF = BASE_DIR / "애드플랜터스_추석_인사_카드_고리추가_highres.pdf"
 
-    # 2. 시스템 기본 한글 폰트 목록 (두꺼운체 우선)
-    system_fonts = [
-        "C:/Windows/Fonts/malgunbd.ttf",    # Windows 맑은 고딕 Bold
-        "C:/Windows/Fonts/malgun.ttf",      # Windows 맑은 고딕
-        "C:/Windows/Fonts/H2GTRM.TTF",      # Windows 한컴고딕
-        "/System/Library/Fonts/Supplemental/AppleGothic.ttf",  # macOS
-        "/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf"  # Linux
-    ]
+# TODO: 사용하려는 한글 TTF 폰트 파일명으로 변경하세요. (현재 폴더에 위치해야 함)
+FONT_FILENAME = "NanumGothic.ttf" 
+FONT_PATH = BASE_DIR / FONT_FILENAME
 
-    for font_path in system_fonts:
-        if os.path.exists(font_path):
-            try:
-                return ImageFont.truetype(font_path, size)
-            except Exception:
-                continue
-
-    logger.warning("적절한 한글 폰트를 찾지 못해 기본 폰트로 대체합니다.")
-    return ImageFont.load_default()
-
-
-def draw_styled_arrow(draw: ImageDraw.ImageDraw, start: Tuple[int, int], end: Tuple[int, int],
-                      control: Tuple[int, int], line_width: int, outline_width: int):
-    """
-    '셀럽' 예시 이미지와 동일하게 검은색 두꺼운 테두리가 둘러진 흰색 휘어진 화살표 생성
-    """
-    # 1. 베지에 곡선(Bezier Curve) 점 생성
-    steps = 60
-    points = []
-    for i in range(steps + 1):
-        t = i / float(steps)
-        x = (1 - t)**2 * start[0] + 2 * (1 - t) * t * control[0] + t**2 * end[0]
-        y = (1 - t)**2 * start[1] + 2 * (1 - t) * t * control[1] + t**2 * end[1]
-        points.append((x, y))
-
-    total_width = line_width + (outline_width * 2)
-
-    # 2. 곡선 외곽선(검은색) 그리기
-    for i in range(len(points) - 1):
-        draw.line([points[i], points[i+1]], fill=(0, 0, 0, 255), width=total_width)
-
-    # 3. 곡선 내부(흰색) 그리기
-    for i in range(len(points) - 1):
-        draw.line([points[i], points[i+1]], fill=(255, 255, 255, 255), width=line_width)
-
-    # 4. 화살표 머리(Arrowhead) 연산
-    p_prev = points[-5]
-    p_end = points[-1]
-    angle = math.atan2(p_end[1] - p_prev[1], p_end[0] - p_prev[0])
-
-    arrow_length = line_width * 3.8
-    arrow_angle = math.pi / 5.5  # 약 32도
-
-    # 외곽 검은색 화살표 삼각형
-    p_left_out = (
-        p_end[0] - (arrow_length + outline_width) * math.cos(angle - arrow_angle),
-        p_end[1] - (arrow_length + outline_width) * math.sin(angle - arrow_angle)
-    )
-    p_right_out = (
-        p_end[0] - (arrow_length + outline_width) * math.cos(angle + arrow_angle),
-        p_end[1] - (arrow_length + outline_width) * math.sin(angle + arrow_angle)
-    )
-    draw.polygon([p_end, p_left_out, p_right_out], fill=(0, 0, 0, 255))
-
-    # 내부 흰색 화살표 삼각형
-    p_left_in = (
-        p_end[0] - arrow_length * math.cos(angle - arrow_angle),
-        p_end[1] - arrow_length * math.sin(angle - arrow_angle)
-    )
-    p_right_in = (
-        p_end[0] - arrow_length * math.cos(angle + arrow_angle),
-        p_end[1] - arrow_length * math.sin(angle + arrow_angle)
-    )
-    draw.polygon([p_end, p_left_in, p_right_in], fill=(255, 255, 255, 255))
-
-
-def add_gori_nametag(image: Image.Image) -> Image.Image:
-    """'셀럽' 예시 이미지 표지 형태를 정교하게 재현하여 '고리' 이름표 합성"""
-    img_w, img_h = image.size
-    overlay = Image.new("RGBA", image.size, (255, 255, 255, 0))
-    draw = ImageDraw.Draw(overlay)
-
-    # 해상도 기반 크기 자동 조절
-    font_size = int(img_h * 0.052)  # 글자 크기
-    font = find_best_font(font_size)
-    stroke_width = max(3, int(font_size * 0.11))  # 두꺼운 검은 테두리 비율
-
-    text = "고리"
+# =============================================================================
+# 2. 스타일 및 위치 커스텀 설정 (기존 사람들의 이름 스타일과 동일하게 맞추세요)
+# =============================================================================
+STYLE_CONFIG = {
+    "text": "고리",
+    "font_size": 24,            # 글자 크기
+    "font_color": HexColor("#FFFFFF"), # 글자 색상 (현재 흰색)
     
-    # 오른쪽 하단 강아지 머리 상단 우측 위치 계산
-    text_x = int(img_w * 0.76)
-    text_y = int(img_h * 0.69)
-
-    # 1. '고리' 텍스트 렌더링 (흰색 글씨 + 두꺼운 검은 테두리)
-    draw.text(
-        (text_x, text_y),
-        text,
-        font=font,
-        fill=(255, 255, 255, 255),
-        stroke_width=stroke_width,
-        stroke_fill=(0, 0, 0, 255)
-    )
-
-    # 2. '고리' 밑에서 강아지 머리를 향해 곡선으로 휘어지는 화살표 좌표 계산
-    arrow_start = (text_x + int(font_size * 1.15), text_y + int(font_size * 0.95))
-    arrow_end = (text_x + int(font_size * 0.35), text_y + int(font_size * 2.2))
-    arrow_control = (text_x + int(font_size * 1.55), text_y + int(font_size * 1.75))
-
-    # 화살표 그리기
-    draw_styled_arrow(
-        draw,
-        start=arrow_start,
-        end=arrow_end,
-        control=arrow_control,
-        line_width=int(stroke_width * 1.2),
-        outline_width=stroke_width
-    )
-
-    return Image.alpha_composite(image.convert("RGBA"), overlay)
+    # PDF의 좌표는 좌측 하단이 (0, 0)입니다. 
+    # 우측 하단 시바견 위치에 맞게 X, Y 좌표를 조정하세요.
+    "pos_x": 800,               # 텍스트 좌측 하단 X 좌표 (문서 크기에 맞춰 수정 필요)
+    "pos_y": 150,               # 텍스트 좌측 하단 Y 좌표 (문서 크기에 맞춰 수정 필요)
+    
+    # 배경 박스(직책/이름표 느낌)가 필요하다면 아래 설정을 사용하세요.
+    "use_bg_box": True,
+    "bg_color": HexColor("#333333"), # 배경색 (현재 어두운 회색)
+    "bg_padding_x": 15,         # 텍스트 좌우 여백
+    "bg_padding_y": 8,          # 텍스트 상하 여백
+    "bg_radius": 5              # 모서리 둥글기
+}
 
 
-def process():
-    if not INPUT_PDF.exists():
-        logger.error(f"입력 PDF 파일이 없습니다: {INPUT_PDF}")
+def create_overlay_pdf(width: float, height: float) -> BytesIO:
+    """
+    주어진 문서 크기(width, height)에 맞춰 텍스트가 포함된 투명 PDF(오버레이)를 메모리에 생성합니다.
+    """
+    packet = BytesIO()
+    c = canvas.Canvas(packet, pagesize=(width, height))
+    
+    # 한글 폰트 등록
+    if not FONT_PATH.exists():
+        logging.error(f"폰트 파일을 찾을 수 없습니다: {FONT_PATH}")
+        logging.error("한글 출력을 위해 TTF 폰트 파일을 폴더에 넣고 이름을 맞춰주세요.")
         sys.exit(1)
-
-    logger.info("PDF 로딩 및 고해상도 변환 처리 중...")
-
+        
     try:
-        doc = fitz.open(INPUT_PDF)
-        processed_images = []
-        page_sizes = []
-
-        for page_num in range(len(doc)):
-            page = doc[page_num]
-            zoom = DPI / 72.0
-            mat = fitz.Matrix(zoom, zoom)
-            pix = page.get_pixmap(matrix=mat, alpha=False)
-
-            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-            page_sizes.append((page.rect.width, page.rect.height))
-
-            if page_num == 0:  # 첫 페이지(카드)에 '고리' 이름표 반영
-                img = add_gori_nametag(img).convert("RGB")
-
-            processed_images.append(img)
-
-        doc.close()
-
+        pdfmetrics.registerFont(TTFont('KoreanFont', str(FONT_PATH)))
+        c.setFont('KoreanFont', STYLE_CONFIG["font_size"])
     except Exception as e:
-        logger.error(f"PDF 처리 중 오류 발생: {e}")
+        logging.error(f"폰트 등록 중 오류가 발생했습니다: {e}")
         sys.exit(1)
 
-    # 고해상도 PDF 합성 및 저장
-    logger.info(f"결과 PDF 생성 중: {OUTPUT_PDF}")
-    temp_img_paths = []
+    text = STYLE_CONFIG["text"]
+    x = STYLE_CONFIG["pos_x"]
+    y = STYLE_CONFIG["pos_y"]
+    
+    # 배경 박스 그리기 (기존 인물 이름 스타일에 박스가 있다면)
+    if STYLE_CONFIG["use_bg_box"]:
+        text_width = c.stringWidth(text, 'KoreanFont', STYLE_CONFIG["font_size"])
+        box_x = x - STYLE_CONFIG["bg_padding_x"]
+        # Y좌표 보정 (폰트 베이스라인 아래로 박스 여백 확보)
+        box_y = y - STYLE_CONFIG["bg_padding_y"] - (STYLE_CONFIG["font_size"] * 0.2)
+        box_width = text_width + (STYLE_CONFIG["bg_padding_x"] * 2)
+        box_height = STYLE_CONFIG["font_size"] + (STYLE_CONFIG["bg_padding_y"] * 2)
+        
+        c.setFillColor(STYLE_CONFIG["bg_color"])
+        c.setStrokeColor(STYLE_CONFIG["bg_color"])
+        c.roundRect(box_x, box_y, box_width, box_height, STYLE_CONFIG["bg_radius"], fill=1, stroke=0)
 
+    # 텍스트 그리기
+    c.setFillColor(STYLE_CONFIG["font_color"])
+    c.drawString(x, y, text)
+    
+    c.save()
+    packet.seek(0)
+    return packet
+
+
+def main():
+    if not INPUT_PDF.exists():
+        logging.error(f"입력 PDF 파일이 존재하지 않습니다: {INPUT_PDF}")
+        return
+
+    logging.info(f"원본 PDF 로드 중: {INPUT_PDF.name}")
+    
     try:
-        first_page_size = page_sizes[0]
-        c = canvas.Canvas(str(OUTPUT_PDF), pagesize=first_page_size)
-
-        for idx, (p_img, (p_w, p_h)) in enumerate(zip(processed_images, page_sizes)):
-            temp_path = OUTPUT_DIR / f"temp_page_{idx}.png"
-            p_img.save(temp_path, "PNG", dpi=(DPI, DPI))
-            temp_img_paths.append(temp_path)
-
-            c.setPageSize((p_w, p_h))
-            c.drawImage(str(temp_path), 0, 0, width=p_w, height=p_h)
-            c.showPage()
-
-        c.save()
-        logger.info("작업 성공적으로 완료!")
-        print(f"\n최종 결과물 저장 완료: {OUTPUT_PDF}")
-
-    finally:
-        for tp in temp_img_paths:
-            if tp.exists():
-                os.remove(tp)
+        # 1. 원본 PDF 읽기
+        reader = PdfReader(str(INPUT_PDF))
+        writer = PdfWriter()
+        
+        # 2. 첫 번째 페이지 가져오기 및 크기 확인
+        page = reader.pages[0]
+        # MediaBox: [x0, y0, x1, y1] (x1이 너비, y1이 높이)
+        page_width = float(page.mediabox.width)
+        page_height = float(page.mediabox.height)
+        
+        logging.info(f"PDF 페이지 크기: Width={page_width}, Height={page_height}")
+        
+        # 3. 투명 배경에 '고리' 텍스트가 그려진 오버레이 PDF 생성
+        logging.info("강아지 '고리' 이름 태그 오버레이 생성 중...")
+        overlay_packet = create_overlay_pdf(page_width, page_height)
+        overlay_reader = PdfReader(overlay_packet)
+        overlay_page = overlay_reader.pages[0]
+        
+        # 4. 원본 페이지 위에 오버레이 병합 (고해상도 원본 데이터 100% 유지)
+        page.merge_page(overlay_page)
+        writer.add_page(page)
+        
+        # 나머지 페이지가 있다면 그대로 추가 (일반적으로 인사카드는 1장이지만 예외처리)
+        for i in range(1, len(reader.pages)):
+            writer.add_page(reader.pages[i])
+            
+        # 5. 결과물 저장
+        with open(OUTPUT_PDF, "wb") as f:
+            writer.write(f)
+            
+        logging.info(f"성공적으로 생성되었습니다! 저장 위치: {OUTPUT_PDF.name}")
+        logging.info("안내: 위치(X, Y)나 색상이 어색하다면 STYLE_CONFIG의 pos_x, pos_y, 컬러 값을 수정 후 다시 실행하세요.")
+        
+    except Exception as e:
+        logging.error(f"PDF 처리 중 예기치 않은 오류가 발생했습니다: {e}", exc_info=True)
 
 
 if __name__ == "__main__":
-    process()
+    main()
