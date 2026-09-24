@@ -1,3 +1,6 @@
+# Required Dependencies:
+# pip install pillow reportlab opencv-python numpy python-dotenv
+
 import os
 import sys
 import logging
@@ -7,48 +10,72 @@ import numpy as np
 from PIL import Image
 from reportlab.pdfgen import canvas
 
-# 진행 상황 로깅 설정
+# 진행 상황 및 디버깅을 위한 로깅 설정
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[logging.StreamHandler(sys.stdout)]
 )
 
-def convert_raster_to_vector_pdf(input_filename: str, output_filename: str, k_colors: int = 24) -> bool:
+def find_input_file(base_dir: Path, target_name: str) -> Path:
     """
-    라스터 이미지(PNG)를 분석하여 벡터 도형 패스(Path)로 변환한 뒤 고해상도 PDF로 저장합니다.
+    확장자 포함 여부와 관계없이 입력 이미지 파일을 안전하게 검색합니다.
+    """
+    # 1. 지정된 파일명 그대로 탐색
+    direct_path = base_dir / target_name
+    if direct_path.exists() and direct_path.is_file():
+        return direct_path
+
+    # 2. 확장자가 생략된 경우 주요 이미지 확장자 탐색 (.png, .jpg, .jpeg, .webp)
+    extensions = ['.png', '.jpg', '.jpeg', '.webp']
+    for ext in extensions:
+        candidate = base_dir / f"{target_name}{ext}"
+        if candidate.exists() and candidate.is_file():
+            return candidate
+
+    # 3. 파일명 매칭 탐색 (부분 일치)
+    for file_path in base_dir.iterdir():
+        if file_path.is_file() and target_name in file_path.stem:
+            return file_path
+
+    return None
+
+def convert_raster_to_vector_pdf(input_name: str, output_filename: str, k_colors: int = 24) -> bool:
+    """
+    라스터 이미지(PNG/JPG 등)를 분석하여 벡터 도형 패스(Path)로 변환한 뒤 고해상도 PDF로 저장합니다.
     
-    :param input_filename: 입력 PNG 파일명
+    :param input_name: 입력 파일명 (확장자 유무 상관없음)
     :param output_filename: 출력 PDF 파일명
     :param k_colors: 추출할 대표 색상 수 (높을수록 원본 이미지와 가까운 디테일 표현)
     """
-    # 1. 안전한 상대 경로 계산 (GitHub 레포 및 터널 환경 대응)
+    # 1. 경로 계산 (image_to_pdf 폴더 내 동적 실행 환경 지원)
     base_dir = Path(__file__).resolve().parent
-    input_path = base_dir / input_filename
-    output_path = base_dir / output_filename
+    logging.info(f"작업 디렉토리: {base_dir}")
 
-    logging.info(f"기준 디렉토리: {base_dir}")
-    logging.info(f"입력 파일 검색: {input_path}")
+    input_path = find_input_file(base_dir, input_name)
 
-    if not input_path.exists():
-        logging.error(f"오류: 입력 파일이 존재하지 않습니다 -> {input_path}")
-        logging.info("파일이 'image_to_pdf' 폴더 내에 정확히 위치해 있는지 확인하세요.")
+    if not input_path or not input_path.exists():
+        logging.error(f"오류: 입력 파일을 찾을 수 없습니다 -> 대상: '{input_name}'")
+        logging.info("파일이 'image_to_pdf' 폴더 내에 존재하는지 확인하세요.")
         return False
 
+    logging.info(f"입력 파일 감지: {input_path.name}")
+    output_path = base_dir / output_filename
+
     try:
-        # 2. 이미지 읽기 (한글 경로 호환성을 위해 np.fromfile + cv2.imdecode 사용)
+        # 2. 이미지 읽기 (한글 파일명/경로 호환성 처리)
         logging.info("이미지 데이터를 로드하는 중...")
         img_array = np.fromfile(str(input_path), np.uint8)
         img_bgr = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
 
         if img_bgr is None:
-            raise ValueError("이미지를 디코딩할 수 없습니다. 올바른 이미지 파일인지 확인하세요.")
+            raise ValueError("이미지를 디코딩할 수 없습니다. 올바른 포맷인지 확인하세요.")
 
         img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
         height, width, _ = img_rgb.shape
         logging.info(f"원본 이미지 해상도: {width} x {height} px")
 
-        # 3. K-Means 색상 양자화 (컬러 벡터 영역 분할)
+        # 3. K-Means 색상 양자화 (컬러 벡터 레이어 분할)
         logging.info(f"색상 벡터화 처리 중 (대표 색상 {k_colors}개 추출)...")
         pixel_data = img_rgb.reshape((-1, 3)).astype(np.float32)
         criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 20, 1.0)
@@ -85,7 +112,6 @@ def convert_raster_to_vector_pdf(input_filename: str, output_filename: str, k_co
             pdf_canvas.setStrokeColorRGB(r, g, b)
 
             for cnt in contours:
-                # 작은 노이즈 제거
                 if cv2.contourArea(cnt) < 3:
                     continue
 
@@ -96,10 +122,8 @@ def convert_raster_to_vector_pdf(input_filename: str, output_filename: str, k_co
                 if len(approx) < 3:
                     continue
 
-                # PDF 벡터 Path 생성
+                # PDF 벡터 Path 생성 (Y축 반전 보정)
                 path = pdf_canvas.beginPath()
-                
-                # ReportLab 캔버스는 좌하단이 (0,0) 원점이므로 Y축 반전
                 start_x = float(approx[0][0][0])
                 start_y = float(pt_height - approx[0][0][1])
                 path.moveTo(start_x, start_y)
@@ -117,8 +141,8 @@ def convert_raster_to_vector_pdf(input_filename: str, output_filename: str, k_co
         pdf_canvas.showPage()
         pdf_canvas.save()
 
-        logging.info(f"변환 성공! 총 {total_paths}개의 벡터 패스가 PDF에 생성되었습니다.")
-        logging.info(f"저장된 파일: {output_path}")
+        logging.info(f"변환 성공! 총 {total_paths}개의 벡터 패스가 생성되었습니다.")
+        logging.info(f"출력 파일: {output_path}")
         return True
 
     except Exception as e:
@@ -127,7 +151,8 @@ def convert_raster_to_vector_pdf(input_filename: str, output_filename: str, k_co
 
 
 if __name__ == "__main__":
-    INPUT_FILENAME = "애드플랜터스_추석 인사 카드.png"
+    # 확장자 유무와 상관없이 파일명 자동 감지
+    INPUT_FILENAME = "애드플랜터스_추석 인사 카드"
     OUTPUT_FILENAME = "애드플랜터스_추석_인사_카드_vector.pdf"
 
     print("=" * 65)
@@ -137,6 +162,6 @@ if __name__ == "__main__":
     success = convert_raster_to_vector_pdf(INPUT_FILENAME, OUTPUT_FILENAME, k_colors=24)
 
     if success:
-        print("\n[완료] 벡터 PDF 변환이 정상적으로 종료되었습니다.")
+        print("\n[완료] 벡터 PDF 변환이 성공적으로 끝났습니다.")
     else:
-        print("\n[실패] 변환 도중 오류가 발생했습니다. 로그 메시지를 확인하세요.")
+        print("\n[실패] 변환 도중 오류가 발생했습니다. 로그를 확인하세요.")
