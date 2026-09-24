@@ -1,220 +1,240 @@
-# =============================================================================
-# [실행 전 필수 패키지 설치 안내]
-# 현재 활성화된 가상환경(.venv) 터미널에서 아래 명령어를 반드시 실행해 주세요.
-# pip install Pillow PyMuPDF
-# =============================================================================
+# Dependencies: pip install pillow reportlab pdf2image opencv-python numpy tqdm pathlib
+# Also requires system package: poppler-utils (on Linux, use `sudo apt install poppler-utils`)
 
 import os
 import sys
 import logging
-import urllib.request
 from pathlib import Path
+from datetime import datetime
+from typing import Tuple, List, Optional
+import numpy as np
+from PIL import Image, ImageDraw, ImageFont
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.utils import ImageReader
+from tqdm import tqdm
+import pdf2image
 
-# -----------------------------------------------------------------------------
-# 1. 의존성 패키지 동적 로드 및 예외 처리
-# -----------------------------------------------------------------------------
-try:
-    from PIL import Image, ImageDraw, ImageFont
-except ImportError:
-    print("\n[오류] Pillow 라이브러리가 설치되지 않았습니다.")
-    print("터미널에 아래 명령어를 입력하여 설치해 주세요:\n> pip install Pillow\n")
-    sys.exit(1)
+# --- Configuration & Styling (Adjust as needed) ---
+# High Resolution Settings
+DPI = 600
+SAVE_QUALITY = 95
+PDF_SAVE_OPTIONS = {'optimize': True}
 
-try:
-    import fitz  # PyMuPDF 라이브러리 (PDF 읽기 및 고해상도 렌더링용)
-except ImportError:
-    print("\n[오류] PyMuPDF 라이브러리가 설치되지 않았습니다. ('fitz' 모듈 없음)")
-    print("터미널에 아래 명령어를 입력하여 설치해 주세요:\n> pip install PyMuPDF\n")
-    sys.exit(1)
+# Font (MUST be provided by user or set to a system font, 
+# e.g., on macOS 'AppleGothic', on Windows 'Malgun Gothic', on Linux 'NanumGothic')
+# A characterful Korean font matching the 'cellup' reference is recommended.
+# Recommended: An open-source hand-written style font, e.g., 'Maplestory-Bold.ttf' or similar.
+KOREAN_FONT_PATH = "korean_font.ttf"  # Set path to a .ttf file in the same directory
+DEFAULT_FONT_PATH = "/System/Library/Fonts/Supplemental/Arial.ttf" # Fallback, no Korean
 
-# -----------------------------------------------------------------------------
-# 2. 로깅 및 환경 설정
-# -----------------------------------------------------------------------------
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
+# Tag Positioning & Design (Tweaking may be necessary for perfect alignment)
+TAG_TEXT = "고리"
+TAG_FONT_SIZE = 48 # High-res points
+TAG_COLOR = (255, 255, 255)  # White text
+TAG_BG_COLOR = (240, 240, 240, 230) # Light grey, slight transparency
+TAG_PADDING = 15
+TAG_CORNER_RADIUS = 10
 
-# 현재 스크립트가 위치한 절대 경로 설정 (GitHub 레포지토리 image_to_pdf 기준)
-BASE_DIR = Path(__file__).resolve().parent
+# Based on a standard card layout, position dog's head vicinity. Adjust percentages.
+DOG_HEAD_POS_ESTIMATE = (0.72, 0.78) # (x, y) relative to PDF image width and height
+CONNECTOR_COLOR = (210, 210, 210) # Light grey connector
+CONNECTOR_THICKNESS = 4
+CONNECTOR_WOBBLE = 2 # Pixels of wobble for hand-drawn effect
+CONNECTOR_POINTS_COUNT = 5 # For a smooth curve
 
-# 파일 경로 설정
-INPUT_FILE_BASE = "애드플랜터스_추석_인사_카드_고리수정"
-OUTPUT_PDF_NAME = f"{INPUT_FILE_BASE}_최종출력.pdf"
-FONT_NAME = "NanumGothicBold.ttf"
+# File Paths (relative to script root)
+INPUT_PDF_FILENAME = "애드플랜터스_추석_인사_카드_highres.pdf"
+REFERENCE_TAG_IMAGE = "20260924_200936.jpg" # Style reference
+OUTPUT_DIR_NAME = "output"
+TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
+MODIFIED_PDF_FILENAME = f"modified_{INPUT_PDF_FILENAME.replace('.pdf', '')}_{TIMESTAMP}.pdf"
 
-OUTPUT_PDF_PATH = BASE_DIR / OUTPUT_PDF_NAME
-FONT_PATH = BASE_DIR / FONT_NAME
+# --- Main Script ---
+def setup_logger(log_file: Path) -> logging.Logger:
+    logging.basicConfig(level=logging.INFO,
+                        format='%(asctime)s [%(levelname)s] %(message)s',
+                        handlers=[logging.FileHandler(log_file), logging.StreamHandler(sys.stdout)])
+    return logging.getLogger("gori_name_tag")
 
-# =============================================================================
-# [직책명표 스타일 커스텀 설정] 
-# 원본 이미지의 직책명표 디자인(흰색 상자, 둥근 모서리 등)
-# =============================================================================
-TAG_BG_COLOR = "#FFFFFF"       # 직책명표 배경색 (흰색)
-TAG_TEXT_COLOR = "#333333"     # 직책명표 글자색 (진한 회색/검정)
-TAG_BORDER_COLOR = "#CCCCCC"   # 직책명표 테두리색
-TAG_BORDER_WIDTH = 6           # 테두리 두께 (초고해상도이므로 두껍게 설정)
-TAG_RADIUS = 25                # 상자 모서리 둥근 정도
-# =============================================================================
+def create_gori_tag(font_path: str, size: int, text: str, 
+                   color: Tuple[int, int, int], bg_color: Tuple[int, int, int, int], 
+                   padding: int, radius: int) -> Image.Image:
+    """Creates a stylized name tag based on parameters."""
+    try:
+        font = ImageFont.truetype(font_path, size)
+    except IOError:
+        logging.warning(f"Could not load font at {font_path}, using fallback.")
+        font = ImageFont.load_default()
+    
+    # Calculate text size
+    dummy_img = Image.new('RGBA', (1, 1))
+    draw = ImageDraw.Draw(dummy_img)
+    text_w, text_h = draw.textsize(text, font=font)
+    
+    # Calculate box size with padding
+    box_w = text_w + 2 * padding
+    box_h = text_h + 2 * padding
+    
+    # Create tag image
+    tag_img = Image.new('RGBA', (box_w, box_h), (0,0,0,0))
+    draw = ImageDraw.Draw(tag_img)
+    
+    # Draw rounded rectangle background
+    draw.rounded_rectangle([(0,0), (box_w, box_h)], radius, fill=bg_color)
+    
+    # Center and draw text
+    text_x = (box_w - text_w) // 2
+    text_y = (box_h - text_h) // 2
+    draw.text((text_x, text_y), text, font=font, fill=color)
+    
+    return tag_img
 
-# -----------------------------------------------------------------------------
-# 3. 리소스 다운로드 유틸리티 (폰트)
-# -----------------------------------------------------------------------------
-def ensure_font():
-    """직책명 텍스트를 위한 무료 한글 폰트(나눔고딕 볼드) 자동 다운로드"""
-    if not FONT_PATH.exists():
-        logging.info("로컬에 한글 폰트가 없어 다운로드합니다...")
-        font_url = "https://github.com/google/fonts/raw/main/ofl/nanumgothic/NanumGothic-Bold.ttf"
-        try:
-            req = urllib.request.Request(font_url, headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req) as response, open(FONT_PATH, 'wb') as out_file:
-                out_file.write(response.read())
-            logging.info("폰트 다운로드 완료.")
-        except Exception as e:
-            logging.error(f"폰트 다운로드 실패: {e}")
-            raise
+def process_pdf():
+    # Setup
+    script_root = Path(__file__).parent
+    output_dir = script_root / OUTPUT_DIR_NAME
+    output_dir.mkdir(parents=True, exist_ok=True)
+    log_file = output_dir / f"log_{TIMESTAMP}.txt"
+    logger = setup_logger(log_file)
+    logger.info("Starting processing...")
 
-# -----------------------------------------------------------------------------
-# 4. 메인 처리 로직 (고해상도 렌더링 -> 편집 -> PDF 출력)
-# -----------------------------------------------------------------------------
-def process_document():
-    logging.info(f"작업을 시작합니다. 대상 파일: {INPUT_FILE_BASE}")
+    # Validate inputs
+    input_pdf_path = script_root / INPUT_PDF_FILENAME
+    reference_image_path = script_root / REFERENCE_TAG_IMAGE
+    
+    if not input_pdf_path.exists():
+        logger.error(f"Input PDF not found at {input_pdf_path}. Exiting.")
+        sys.exit(1)
+    if not reference_image_path.exists():
+        logger.warning(f"Reference tag image not found at {reference_image_path}. Tag style will be generic.")
+
+    final_modified_pdf_path = output_dir / MODIFIED_PDF_FILENAME
 
     try:
-        ensure_font()
-    except Exception:
-        return
+        # 1. Load PDF pages as high-res images
+        logger.info(f"Converting PDF {INPUT_PDF_FILENAME} at {DPI} DPI...")
+        with tqdm(desc="PDF conversion", unit="page") as pbar:
+            images = pdf2image.convert_from_path(input_pdf_path, dpi=DPI, thread_count=os.cpu_count(), fmt="png")
+            pbar.update(len(images))
+        
+        if not images:
+            logger.error("No pages converted.")
+            sys.exit(1)
 
-    # 입력 파일 탐색 (.pdf, .jpg, .png 모두 호환되도록 탐색)
-    input_pdf_path = BASE_DIR / f"{INPUT_FILE_BASE}.pdf"
-    input_img_path_jpg = BASE_DIR / f"{INPUT_FILE_BASE}.jpg"
-    input_img_path_png = BASE_DIR / f"{INPUT_FILE_BASE}.png"
+        main_image = images[0] # Assuming single page card
+        main_img_w, main_img_h = main_image.size
+        logger.info(f"Loaded page image size: {main_img_w}x{main_img_h}")
 
-    target_path = None
-    file_type = None
-
-    if input_pdf_path.exists():
-        target_path = input_pdf_path
-        file_type = "pdf"
-    elif input_img_path_jpg.exists():
-        target_path = input_img_path_jpg
-        file_type = "img"
-    elif input_img_path_png.exists():
-        target_path = input_img_path_png
-        file_type = "img"
-    else:
-        logging.error(f"입력 파일을 찾을 수 없습니다: {INPUT_FILE_BASE}.(pdf/jpg/png)")
-        logging.info("main.py와 같은 폴더에 파일이 존재하는지, 파일명이 정확한지 확인해 주세요.")
-        return
-
-    working_img = None
-    doc = None
-
-    try:
-        if file_type == "pdf":
-            logging.info(f"PDF 문서를 감지했습니다. 초고해상도로 렌더링을 시작합니다: {target_path.name}")
-            doc = fitz.open(target_path)
-            page = doc[0]  # 첫 번째 페이지 기준
+        # 2. Create the "고리" tag
+        logger.info(f"Generating tag for '{TAG_TEXT}'...")
+        font_path = script_root / KOREAN_FONT_PATH
+        if not font_path.exists():
+            font_path = Path(DEFAULT_FONT_PATH)
+            logger.warning(f"Custom Korean font not found at {script_root / KOREAN_FONT_PATH}. Using fallback {DEFAULT_FONT_PATH}. Korean text will likely be broken or standard Arial.")
             
-            # 해상도를 극대화하기 위해 확대 비율 설정 (초고해상도 인쇄용)
-            zoom = 4.0 
-            mat = fitz.Matrix(zoom, zoom)
-            pix = page.get_pixmap(matrix=mat, alpha=False)
+        gori_tag_image = create_gori_tag(str(font_path), TAG_FONT_SIZE, TAG_TEXT, TAG_COLOR, TAG_BG_COLOR, TAG_PADDING, TAG_CORNER_RADIUS)
+        tag_w, tag_h = gori_tag_image.size
+        logger.info(f"Tag image generated: {tag_w}x{tag_h}")
+
+        # 3. Placement calculation and final image composite
+        logger.info("Compositing tag onto card...")
+        
+        # Estimate dog position and tag placement. 
+        # Position slightly to the right and above the dog's head.
+        dog_head_x = int(DOG_HEAD_POS_ESTIMATE[0] * main_img_w)
+        dog_head_y = int(DOG_HEAD_POS_ESTIMATE[1] * main_img_h)
+        
+        tag_x_final = dog_head_x + 100
+        tag_y_final = dog_head_y - tag_h - 150
+        
+        # Ensure tag is on screen
+        tag_x_final = max(0, min(main_img_w - tag_w, tag_x_final))
+        tag_y_final = max(0, min(main_img_h - tag_h, tag_y_final))
+
+        # Composite the tag
+        main_image_rgba = main_image.convert("RGBA")
+        combined_image = Image.alpha_composite(main_image_rgba, Image.new("RGBA", main_image_rgba.size, (0,0,0,0)))
+        combined_image.paste(gori_tag_image, (tag_x_final, tag_y_final), gori_tag_image)
+        
+        # 4. Draw connecting curve (inspired by 'cellup' reference)
+        logger.info("Drawing hand-drawn style connecting curve...")
+        
+        # Define the path of the curve, adding jitter for wobble
+        control_points = [
+            (dog_head_x - 10, dog_head_y + 10), # Start near head
+            (dog_head_x + 50, dog_head_y - 30),
+            (tag_x_final - 30, tag_y_final + tag_h + 30),
+            (tag_x_final, tag_y_final + tag_h + 10) # End near tag
+        ]
+        
+        # Generate wobbly line segments
+        path = []
+        for i in range(len(control_points) - 1):
+            p1 = control_points[i]
+            p2 = control_points[i+1]
             
-            # PyMuPDF 픽셀 데이터를 Pillow 이미지 객체로 변환
-            working_img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+            # Subdivide and add noise
+            t = np.linspace(0, 1, CONNECTOR_POINTS_COUNT)
+            xs = (1-t) * p1[0] + t * p2[0]
+            ys = (1-t) * p1[1] + t * p2[1]
+            
+            # Add jitter to internal points
+            xs[1:-1] += np.random.randint(-CONNECTOR_WOBBLE, CONNECTOR_WOBBLE + 1, size=len(xs)-2)
+            ys[1:-1] += np.random.randint(-CONNECTOR_WOBBLE, CONNECTOR_WOBBLE + 1, size=len(ys)-2)
+            
+            segment_path = [(x, y) for x, y in zip(xs, ys)]
+            path.extend(segment_path[1:] if path else segment_path)
+
+        draw_combined = ImageDraw.Draw(combined_image)
+        # Draw varied-width small circles and connect for a continuous hand-drawn line
+        for j in range(len(path)-1):
+            radius = np.random.randint(CONNECTOR_THICKNESS-1, CONNECTOR_THICKNESS+1)
+            pt = path[j]
+            draw_combined.ellipse([pt[0]-radius, pt[1]-radius, pt[0]+radius, pt[1]+radius], fill=CONNECTOR_COLOR)
+            
+        # Draw final endpoint circle
+        radius = np.random.randint(CONNECTOR_THICKNESS-1, CONNECTOR_THICKNESS+1)
+        pt = control_points[-1]
+        draw_combined.ellipse([pt[0]-radius, pt[1]-radius, pt[0]+radius, pt[1]+radius], fill=CONNECTOR_COLOR)
+
+        # 5. Save final modified page to high-res PDF
+        logger.info(f"Saving modified high-resolution PDF at {final_modified_pdf_path}...")
+        c = canvas.Canvas(str(final_modified_pdf_path), pagesize=A4) 
+        width, height = A4
+        
+        # Calculate scaling to fit A4 while maintaining aspect ratio
+        img_w, img_h = combined_image.size
+        aspect_ratio = img_w / img_h
+        if aspect_ratio > (width / height):
+            draw_w = width
+            draw_h = width / aspect_ratio
         else:
-            logging.info(f"이미지 문서를 감지했습니다: {target_path.name}")
-            img_open = Image.open(target_path)
-            working_img = img_open.convert("RGB")
-            img_open.close()
+            draw_h = height
+            draw_w = height * aspect_ratio
+        
+        x_centered = (width - draw_w) / 2
+        y_centered = (height - draw_h) / 2
 
-        width, height = working_img.size
-        logging.info(f"이미지 준비 완료 (작업 해상도: {width} x {height})")
+        # Convert PIL image to a ReportLab-usable temporary image
+        img_data = combined_image.convert("RGB")
+        img_buffer = os.path.join(output_dir, "temp_composite.png")
+        img_data.save(img_buffer, format="PNG", quality=SAVE_QUALITY, **PDF_SAVE_OPTIONS)
+        c.drawImage(img_buffer, x_centered, y_centered, width=draw_w, height=draw_h)
+        c.showPage()
+        c.save()
+        os.remove(img_buffer) # Clean temp file
 
-        # -------------------------------------------------------------------------
-        # 이미지 편집 (직책명표 그리기)
-        # -------------------------------------------------------------------------
-        draw = ImageDraw.Draw(working_img)
-        
-        # 해상도에 비례하여 폰트 크기 동적 계산 (화면 너비의 약 2.5%)
-        font_size = int(width * 0.025)
-        if font_size < 20: font_size = 20
-        font = ImageFont.truetype(str(FONT_PATH), size=font_size)
-        
-        name_text = "고리"
-        
-        # 텍스트가 차지하는 물리적 크기 계산
-        bbox = draw.textbbox((0, 0), name_text, font=font)
-        text_width = bbox[2] - bbox[0]
-        text_height = bbox[3] - bbox[1]
-        
-        # 직책명표(상자) 내부 여백 설정
-        padding_x = int(font_size * 0.8)
-        padding_y = int(font_size * 0.4)
-        box_width = text_width + (padding_x * 2)
-        box_height = text_height + (padding_y * 2)
-        
-        # [위치 조정 안내] 강아지 위치 (현재 우측 15%, 하단 20% 지점으로 추정)
-        # 🌟 실제 강아지 위치와 맞지 않으면 아래 0.85와 0.80 비율을 약간씩 수정해 주세요.
-        dog_x = int(width * 0.85)
-        dog_y = int(height * 0.80)
-        
-        # 상자 좌표 계산 (강아지 머리 위 중앙 정렬)
-        box_x0 = dog_x - (box_width // 2)
-        box_y0 = dog_y - box_height
-        box_x1 = box_x0 + box_width
-        box_y1 = box_y0 + box_height
-        
-        # 1) 직책명표 배경 상자 그리기
-        draw.rounded_rectangle(
-            [box_x0, box_y0, box_x1, box_y1], 
-            radius=TAG_RADIUS, 
-            fill=TAG_BG_COLOR,
-            outline=TAG_BORDER_COLOR,
-            width=TAG_BORDER_WIDTH
-        )
-        
-        # 2) 직책명표 텍스트 쓰기
-        text_x = box_x0 + padding_x
-        text_y = box_y0 + padding_y - int(font_size * 0.1)  # 시각적 수직 중앙 정렬 보정
-        draw.text((text_x, text_y), name_text, font=font, fill=TAG_TEXT_COLOR)
-        
-        logging.info("강아지 위에 '고리' 직책명표 합성 완료.")
+        # 6. Final success message and cleanup
+        logger.info("Process complete.")
+        for img in images:
+             if hasattr(img, 'filename') and img.filename:
+                 img.close()
+        print(f"\nSuccessfully created modified PDF: {final_modified_pdf_path}\nMake sure to provide 'korean_font.ttf' in the script directory for proper Korean text rendering.\nAdjust DOG_HEAD_POS_ESTIMATE and control_points if perfect positioning is needed.")
 
-        # -------------------------------------------------------------------------
-        # 고해상도 PDF 저장
-        # -------------------------------------------------------------------------
-        logging.info("최대 해상도 PDF 파일로 저장을 시작합니다...")
-        
-        # 해상도 손실이 없도록 DPI(600)와 품질(100)을 최고치로 강제 설정
-        working_img.save(
-            OUTPUT_PDF_PATH, 
-            "PDF", 
-            resolution=600.0, 
-            quality=100, 
-            save_all=True
-        )
-        logging.info(f"★성공★ 초고해상도 PDF 문서가 생성되었습니다: {OUTPUT_PDF_PATH}")
-
-    except MemoryError:
-        logging.error("메모리 부족: PDF 렌더링 해상도가 너무 높습니다. 시스템 리소스를 확인하세요.")
-    except PermissionError:
-        logging.error(f"권한 오류: '{OUTPUT_PDF_NAME}' 파일이 뷰어 등에 열려있습니다. 닫은 후 다시 실행해 주세요.")
     except Exception as e:
-        logging.error(f"작업 중 예기치 못한 오류 발생: {e}")
-    finally:
-        # 리소스 메모리 반환
-        if working_img:
-            working_img.close()
-        if doc:
-            doc.close()
+        logger.error(f"An error occurred: {e}")
+        sys.exit(1)
 
 if __name__ == "__main__":
-    try:
-        process_document()
-    except KeyboardInterrupt:
-        logging.warning("\n사용자에 의해 작업이 중단되었습니다.")
-    except Exception as e:
-        logging.critical(f"심각한 오류 발생: {e}")
+    process_pdf()
