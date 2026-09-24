@@ -1,220 +1,141 @@
-# ==========================================
-# File: main.py
-# Description: ADPLANTERS 9:16 '해피메리추석' 포스터 자동 탐색 및 300 DPI 고해상도 PDF 변환 통합 스크립트
-# Location: github_repo/image_to_pdf/main.py
-# ==========================================
-# [Requirements]
-# pillow>=10.0.0
-# reportlab>=4.0.0
-# python-dotenv>=1.0.0
-# requests>=2.31.0
-# openai>=1.0.0
-# ==========================================
+"""
+# Requirements
+# pip install Pillow
 
-import os
-import sys
-import logging
-from pathlib import Path
-from io import BytesIO
-
-# 외부 모듈 예외 처리 구문
-try:
-    import requests
-    from PIL import Image
-    from reportlab.pdfgen import canvas
-    from dotenv import load_dotenv
-except ImportError as e:
-    print(f"❌ 필수 패키지가 설치되지 않았습니다: {e}")
-    print("👉 터미널에서 다음 명령어를 실행하세요: pip install pillow reportlab python-dotenv requests openai")
-    sys.exit(1)
-
-# --- [터미널 실시간 로깅 설정] ---
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
-    handlers=[logging.StreamHandler(sys.stdout)]
-)
-
-# --- [상수 및 절대 경로 설정 (환경 격리 완벽 대응)] ---
-BASE_DIR = Path(__file__).parent.resolve()
-PDF_DPI = 300  # 고해상도 인쇄 규격 (300 DPI)
-TARGET_IMAGE_NAME = "happy_merry_chuseok_9x16.png"
-OUTPUT_PDF_NAME = "ADPLANTERS_HappyMerryChuseok_300DPI.pdf"
-
-# 단가표, 안내문, 로고, 파비콘 등 포스터가 아닌 이미지 자동 오탐지 방지 필터
-EXCLUDE_KEYWORDS = [
-    "logo", "favicon", "banner", "로고", "파비콘", "배너", "icon",
-    "광고", "상품", "안내", "단가", "price", "table"
-]
-
-# .env 환경 변수 로드 (.env에 OPENAI_API_KEY 설정 시 이미지 자동 생성 지원)
-env_file = BASE_DIR / ".env"
-if env_file.exists():
-    load_dotenv(dotenv_path=env_file)
-
-# [보안 지침] API 키는 하드코딩하지 않고 환경 변수에서 안전하게 불러옵니다.
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-
-# 9:16 포스터 생성 프롬프트 명세
-PROMPT_DESCRIPTION = """
-Vertical 9:16 aspect ratio poster for Chuseok holiday greeting.
-Deep navy blue night sky with a giant bright golden full moon at top center, shooting stars, and dark blue mountain lake landscape with moonlight reflecting on the water.
-Written in clean white Korean calligraphy in the upper sky: '해피메리추석'.
-At the bottom campsite setup with equipment hardcases and warm lanterns.
-Team members positioned around lakeside from left to right:
-1. '촬영감독' (Male director standing behind a professional camera on a tripod),
-2. '웹기획자' (Male web planner next to him holding a tablet),
-3. 'CEO' (Male CEO sitting on a camping chair, wearing dark blue Levi's jeans with the signature red pocket tab visible, and light grey Asics Gel-Kayano sneakers),
-4. '셀럽 A' (Attractive female celebrity nearby),
-5. '셀럽 B' (Attractive female celebrity standing),
-6. '마케터' (Handsome male marketer with a notebook),
-7. '개발자' (Male developer on the right wearing a headset working on a laptop),
-8. A cute Shiba Inu dog sitting next to the developer.
-White text labels with small white pointer arrows above each person: '촬영감독', '웹기획자', 'CEO', '셀럽 A', '셀럽 B', '마케터', '개발자'.
-At the bottom center, the official ADPLANTERS logo.
-Photorealistic, rich blue night lighting, ultra-high detail.
+# Directory Structure (GitHub Public Repo)
+# image_to_pdf/
+#  ├── main.py
+#  ├── image_56c6ff.jpg
+#  ├── 애드플랜터스-로고_PNG.png
+#  └── (옵션) cursive.ttf (원하는 흰색 필기체 폰트 파일)
 """
 
-def generate_image_with_ai(prompt: str, save_path: Path) -> bool:
-    """
-    OpenAI DALL-E 3 API를 호출하여 9:16 포스터 이미지를 자동 생성하고 저장합니다.
-    """
-    if not OPENAI_API_KEY:
-        logging.warning("⚠️ OPENAI_API_KEY가 설정되지 않아 AI 이미지 자동 생성을 건너뜁니다.")
-        return False
+import os
+import logging
+from pathlib import Path
+from PIL import Image, ImageDraw, ImageFont
 
+# 로깅 설정 (터미널 진행률 및 에러 확인용)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+def get_font(base_dir: Path, size: int) -> ImageFont.FreeTypeFont:
+    """필기체 폰트를 불러옵니다. 없으면 시스템 기본 폰트를 사용합니다."""
+    # 폰트 파일이 있다면 사용 (예: cursive.ttf)
+    font_path = base_dir / "cursive.ttf"
     try:
-        from openai import OpenAI
-        client = OpenAI(api_key=OPENAI_API_KEY)
-        logging.info("🎨 DALL-E 3 API를 호출하여 '해피메리추석' 포스터 이미지를 생성 중입니다...")
+        if font_path.exists():
+            return ImageFont.truetype(str(font_path), size)
+        
+        # 윈도우/맥 기본 폰트 폴백 (Fallback) 처리
+        if os.name == 'nt':
+            return ImageFont.truetype("malgun.ttf", size)
+        else:
+            return ImageFont.truetype("AppleGothic.ttf", size)
+    except IOError:
+        logging.warning("폰트를 찾을 수 없어 기본 폰트를 사용합니다. (영문만 지원될 수 있음)")
+        return ImageFont.load_default()
 
-        response = client.images.generate(
-            model="dall-e-3",
-            prompt=prompt,
-            size="1024x1792",  # 9:16 세로형 규격
-            quality="hd",
-            n=1
-        )
-        image_url = response.data[0].url
-        logging.info("✅ 이미지 생성 성공! 고해상도 파일 다운로드 중...")
-
-        res = requests.get(image_url, timeout=30)
-        res.raise_for_status()
-
-        with Image.open(BytesIO(res.content)) as img:
-            img.save(save_path, format="PNG")
-            logging.info(f"💾 이미지 저장 완료: {save_path.name}")
-        return True
-
-    except Exception as e:
-        logging.error(f"❌ AI 이미지 생성 중 에러 발생: {e}")
-        return False
-
-def find_chuseok_poster_image(script_dir: Path) -> Path:
-    """
-    단가표, 로고, 파비콘 등 불필요한 이미지를 제외하고
-    '해피메리추석' 포스터 이미지(.png, .jpg)만 정확하게 자동 감지합니다.
-    """
-    # 1. 지정된 기본 파일명이 존재할 경우 최우선 선택
-    target_path = script_dir / TARGET_IMAGE_NAME
-    if target_path.exists():
-        return target_path
-
-    # 2. 지정 파일명이 없을 경우, 오탐지 키워드가 없는 최신 이미지 탐색
-    valid_extensions = ("*.png", "*.jpg", "*.jpeg", "*.PNG", "*.JPG", "*.JPEG")
-    candidates = []
-
-    for ext in valid_extensions:
-        for file_path in script_dir.glob(ext):
-            filename_lower = file_path.name.lower()
-            if any(keyword in filename_lower for keyword in EXCLUDE_KEYWORDS):
-                continue
-            candidates.append(file_path)
-
-    if candidates:
-        latest_file = max(candidates, key=lambda p: p.stat().st_mtime)
-        logging.info(f"🔍 포스터 이미지 자동 감지: {latest_file.name}")
-        return latest_file
-
-    return None
-
-def convert_image_to_pdf(image_path: Path, pdf_path: Path) -> bool:
-    """
-    포스터 이미지를 화질 손실 없이 300 DPI 고해상도 규격의 PDF 문서로 변환합니다.
-    """
-    logging.info(f"📄 PDF 변환 시작: {image_path.name} -> {pdf_path.name}")
-
+def draw_tag(draw: ImageDraw.ImageDraw, x: float, y: float, text: str, font: ImageFont.FreeTypeFont):
+    """지정된 좌표 중심에 반투명 꼬리표와 흰색 텍스트를 그립니다."""
     try:
-        # 리소스 메모리 해제를 위한 with 구문 활용
-        with Image.open(image_path) as img:
-            img_width, img_height = img.size
-            img_mode = img.mode
-            logging.info(f"📊 이미지 해상도 분석: {img_width} x {img_height} px ({img_mode})")
-
-            # 300 DPI 기준 PDF Canvas Point 단위 계산 (1 inch = 72 points)
-            page_width_pts = (img_width / PDF_DPI) * 72
-            page_height_pts = (img_height / PDF_DPI) * 72
-
-            c = canvas.Canvas(str(pdf_path), pagesize=(page_width_pts, page_height_pts))
-            c.drawImage(
-                str(image_path),
-                0, 0,
-                width=page_width_pts,
-                height=page_height_pts,
-                preserveAspectRatio=True,
-                mask='auto'
-            )
-            c.showPage()
-            c.save()
-
-            logging.info(f"🎉 300 DPI 고해상도 PDF 출력 성공: {pdf_path.name}")
-            return True
-
-    except MemoryError:
-        logging.error("❌ 메모리 부족: 이미지 파일 해상도가 가용 메모리를 초과했습니다.")
-        return False
-    except PermissionError:
-        logging.error("❌ 권한 오류: 출력할 PDF 파일이 이미 다른 프로그램에서 열려 있는지 확인하세요.")
-        return False
+        # 텍스트 크기 계산
+        bbox = draw.textbbox((0, 0), text, font=font)
+        tw = bbox[2] - bbox[0]
+        th = bbox[3] - bbox[1]
+        
+        # 꼬리표 배경 좌표 계산 (중앙 정렬)
+        pad_x, pad_y = 12, 8
+        left = x - (tw / 2) - pad_x
+        top = y - (th / 2) - pad_y
+        right = x + (tw / 2) + pad_x
+        bottom = y + (th / 2) + pad_y
+        
+        # 반투명 검은색 꼬리표 배경
+        draw.rounded_rectangle([left, top, right, bottom], radius=8, fill=(0, 0, 0, 160))
+        # 흰색 필기체 텍스트
+        draw.text((x - (tw / 2), y - (th / 2) - 2), text, font=font, fill=(255, 255, 255, 255))
     except Exception as e:
-        logging.error(f"❌ PDF 변환 중 예기치 못한 에러 발생: {e}", exc_info=True)
-        return False
+        logging.error(f"'{text}' 꼬리표 렌더링 중 오류 발생: {e}")
 
-def main():
-    print("\n" + "="*65)
-    print("🚀 [ADPLANTERS] 해피메리추석 9:16 포스터 -> 300 DPI PDF 파이프라인")
-    print("="*65)
-    logging.info(f"작업 폴더 위치: {BASE_DIR}")
+def process_image_to_pdf():
+    base_dir = Path(__file__).parent.resolve()
+    input_img_path = base_dir / "image_56c6ff.jpg"
+    logo_path = base_dir / "애드플랜터스-로고_PNG.png"
+    output_pdf_path = base_dir / "output_high_res.pdf"
 
-    image_filepath = BASE_DIR / TARGET_IMAGE_NAME
-    pdf_filepath = BASE_DIR / OUTPUT_PDF_NAME
-
-    # 1. API 키가 등록되어 있고 원본 파일이 없으면 AI 이미지 자동 생성
-    if not image_filepath.exists() and OPENAI_API_KEY:
-        generate_image_with_ai(PROMPT_DESCRIPTION, image_filepath)
-
-    # 2. 이미지 자동 탐색 (단가표, 로고, 배너 등 제외)
-    target_image = find_chuseok_poster_image(BASE_DIR)
-
-    if not target_image:
-        logging.error("❌ 'image_to_pdf' 폴더에서 변환할 포스터 이미지를 찾을 수 없습니다.")
-        print("-" * 65)
-        print("💡 [안내]")
-        print("1. .env 파일에 OPENAI_API_KEY를 설정하시면 이미지가 자동으로 생성됩니다.")
-        print(f"2. 또는 포스터 이미지 파일(.png/.jpg)을 '{BASE_DIR}' 폴더에 넣고 실행해 주세요.")
-        print("="*65 + "\n")
+    if not input_img_path.exists():
+        logging.error(f"입력 이미지를 찾을 수 없습니다: {input_img_path}")
         return
 
-    # 3. 고해상도 300 DPI PDF 출력
-    success = convert_image_to_pdf(target_image, pdf_filepath)
+    logging.info("이미지 처리를 시작합니다...")
 
-    print("-" * 65)
-    if success:
-        print("✅ [성공] 고해상도 300 DPI PDF 출력이 완료되었습니다!")
-        print(f"📁 생성된 PDF 위치: {pdf_filepath}")
-    else:
-        print("❌ [실패] 변환 도중 에러가 발생했습니다. 로그를 확인해 주세요.")
-    print("="*65 + "\n")
+    try:
+        # 1. 고해상도 처리를 위해 원본 이미지 로드 (메모리 누수 방지를 위한 with 구문)
+        with Image.open(input_img_path) as img:
+            # 투명도가 포함된 작업을 위해 RGBA로 변환
+            img = img.convert("RGBA")
+            draw = ImageDraw.Draw(img, "RGBA")
+            W, H = img.size
+            
+            # 해상도 비례 폰트 사이즈 (이미지 가로 폭의 약 2.5%)
+            font_size = max(int(W * 0.025), 16) 
+            font = get_font(base_dir, font_size)
+
+            # 2. 인원 역할 및 위치 배치 (x_ratio, y_ratio)
+            # 이미지 비율을 기준으로 머리 위쪽에 꼬리표가 달리도록 설정
+            positions = [
+                ("웹기획자", 0.15, 0.72),  # 좌측 앉아있는 인물
+                ("셀럽A", 0.33, 0.58),    # 좌측 서있는 인물
+                ("CEO", 0.55, 0.65),      # 중앙 앉아있는 인물 (가리키는 남성)
+                ("촬영감독", 0.68, 0.55), # 우측 서있는 인물 (카메라)
+                ("셀럽B", 0.82, 0.58),    # 우측 서있는 인물 (노트)
+                ("마케터", 0.90, 0.75),   # 우측 앉아있는 인물 (노트북)
+            ]
+
+            for role, x_ratio, y_ratio in positions:
+                draw_tag(draw, W * x_ratio, H * y_ratio, role, font)
+                
+            # 3. 하단 기존 로고 삭제(배경색 덮기) 및 새 로고 얹기
+            if logo_path.exists():
+                # 기존 "Noah Universe Company" 로고 위치 추정 박스
+                logo_box = [W * 0.35, H * 0.93, W * 0.65, H * 0.99]
+                
+                # 배경색과 비슷한 어두운 색으로 기존 로고 가리기
+                draw.rectangle(logo_box, fill=(20, 15, 30, 255))
+                
+                # 새 로고 로드 및 리사이징 (LANCZOS 고품질 리샘플링)
+                with Image.open(logo_path) as logo:
+                    logo = logo.convert("RGBA")
+                    lw_max = int(logo_box[2] - logo_box[0])
+                    lh_max = int(logo_box[3] - logo_box[1])
+                    
+                    logo.thumbnail((lw_max, lh_max), Image.Resampling.LANCZOS)
+                    
+                    # 로고 중앙 정렬 좌표 계산
+                    paste_x = int(logo_box[0] + (lw_max - logo.width) / 2)
+                    paste_y = int(logo_box[1] + (lh_max - logo.height) / 2)
+                    
+                    # 로고 내 검은 글씨 가시성을 위해 반투명 흰색 배경 깔기 (선택적)
+                    draw.rounded_rectangle(
+                        [paste_x - 10, paste_y - 5, paste_x + logo.width + 10, paste_y + logo.height + 5], 
+                        radius=5, fill=(255, 255, 255, 220)
+                    )
+                    
+                    # 로고 합성 (alpha 채널을 마스크로 사용)
+                    img.paste(logo, (paste_x, paste_y), logo)
+            else:
+                logging.warning("새로운 로고 이미지를 찾을 수 없어 로고 교체를 건너뜁니다.")
+
+            # 4. 최종 결과물을 고해상도 PDF로 저장
+            logging.info("고해상도 PDF 생성을 진행 중입니다...")
+            rgb_img = img.convert("RGB")
+            # dpi=300, resolution 옵션으로 고해상도 보장
+            rgb_img.save(output_pdf_path, "PDF", resolution=300.0, save_all=True)
+            
+            logging.info(f"성공적으로 완료되었습니다. PDF 저장 경로: {output_pdf_path}")
+
+    except Exception as e:
+        logging.error(f"이미지 처리 중 치명적인 오류 발생: {e}")
 
 if __name__ == "__main__":
-    main()
+    process_image_to_pdf()
