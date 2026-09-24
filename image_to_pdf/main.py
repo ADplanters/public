@@ -6,6 +6,7 @@
 
 import os
 import sys
+import math
 import logging
 from pathlib import Path
 import pymupdf  # 최신 PyMuPDF API 사용
@@ -30,6 +31,28 @@ def get_system_korean_font() -> str:
         if os.path.exists(path):
             return path
     return None
+
+def draw_arrow(shape, start_pt: pymupdf.Point, end_pt: pymupdf.Point, head_length: float = 8.0, head_angle_deg: float = 30.0):
+    """
+    모든 PyMuPDF 버전에서 오류 없이 호환되도록 
+    수학적 벡터 계산으로 선과 화살표 촉(Head)을 완벽하게 그립니다.
+    """
+    # 1. 메인 선 그리기
+    shape.draw_line(start_pt, end_pt)
+    
+    # 2. 화살표 방향 각도 계산 (라디안)
+    angle = math.atan2(end_pt.y - start_pt.y, end_pt.x - start_pt.x)
+    arrow_angle = math.radians(head_angle_deg)
+    
+    # 3. 화살표 촉 양쪽 날개 위치 계산
+    left_x = end_pt.x - head_length * math.cos(angle - arrow_angle)
+    left_y = end_pt.y - head_length * math.sin(angle - arrow_angle)
+    right_x = end_pt.x - head_length * math.cos(angle + arrow_angle)
+    right_y = end_pt.y - head_length * math.sin(angle + arrow_angle)
+    
+    # 4. 화살표 촉 선 추가
+    shape.draw_line(end_pt, pymupdf.Point(left_x, left_y))
+    shape.draw_line(end_pt, pymupdf.Point(right_x, right_y))
 
 def add_label_and_arrow_to_pdf(input_path: Path, output_path: Path, custom_font_path: str = None):
     """
@@ -59,7 +82,7 @@ def add_label_and_arrow_to_pdf(input_path: Path, output_path: Path, custom_font_
             # [디자인 커스텀 영역] (너비 368.64 / 높이 660.48 기준)
             # ==================================================================
             text = "고리"
-            fontsize = 16          # 글자 크기
+            fontsize = 15          # 글자 크기
             text_color = (0, 0, 0) # RGB 검은색
             
             # 우측 하단 시바견 위치 좌표 세팅
@@ -71,7 +94,7 @@ def add_label_and_arrow_to_pdf(input_path: Path, output_path: Path, custom_font_
             arrow_color = (0.1, 0.1, 0.1) # 짙은 회색 / 검은색
             line_thickness = 1.8           # 선 두께
             
-            arrow_start = pymupdf.Point(text_x + 15, text_y + 12) # 텍스트 아래쪽
+            arrow_start = pymupdf.Point(text_x + 15, text_y + 8)  # 텍스트 바로 아래
             arrow_end = pymupdf.Point(width - 50, height - 50)     # 강아지 위치 방향
             # ==================================================================
 
@@ -90,18 +113,23 @@ def add_label_and_arrow_to_pdf(input_path: Path, output_path: Path, custom_font_
             )
             logging.info(f"텍스트 '{text}' 삽입 완료 (좌표: {text_point})")
 
-            # 3. 화살표 벡터 그리기 (arrows=2 는 끝부분 화살표 머리를 의미함)
+            # 3. 화살표 벡터 그리기 (범용 버전 안전 방식)
             shape = page.new_shape()
-            shape.draw_line(arrow_start, arrow_end)
+            draw_arrow(
+                shape, 
+                start_pt=arrow_start, 
+                end_pt=arrow_end, 
+                head_length=9.0, 
+                head_angle_deg=25.0
+            )
             shape.finish(
                 width=line_thickness, 
-                color=arrow_color, 
-                arrows=2  # 0:없음, 1:시작점, 2:끝점(ARROW_LAST), 3:양쪽
+                color=arrow_color
             )
             shape.commit()
-            logging.info("화살표 벡터 적용 완료")
+            logging.info("화살표 벡터 그린 후 동기화 완료")
 
-            # 4. 고해상도 최적화 저장
+            # 4. 고해상도 최적화 저장 (100% 원본 해상도 보존)
             doc.save(output_path, garbage=4, deflate=True)
             logging.info(f"성공적으로 저장되었습니다: {output_path}")
 
