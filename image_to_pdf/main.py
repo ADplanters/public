@@ -8,7 +8,7 @@ import os
 import sys
 import logging
 from pathlib import Path
-import pymupdf  # fitz 대신 pymupdf 최신 API 사용
+import pymupdf  # 최신 PyMuPDF API 사용
 
 # [환경 설정] 로깅 초기화
 logging.basicConfig(
@@ -18,9 +18,9 @@ logging.basicConfig(
 )
 
 def get_system_korean_font() -> str:
-    """운영체제별 기본 한글 폰트 파일 경로를 탐색합니다."""
+    """운영체제별 기본 한글 폰트(.ttf/.ttc) 파일 경로를 탐색합니다."""
     candidate_paths = [
-        r"C:\Windows\Fonts\malgun.ttf",       # Windows 맑은 고딕 (기본)
+        r"C:\Windows\Fonts\malgun.ttf",       # Windows 맑은 고딕
         r"C:\Windows\Fonts\malgunbd.ttf",     # Windows 맑은 고딕 Bold
         r"C:\Windows\Fonts\gulim.ttc",        # Windows 굴림
         "/System/Library/Fonts/Supplemental/AppleGothic.ttf",  # macOS
@@ -33,17 +33,17 @@ def get_system_korean_font() -> str:
 
 def add_label_and_arrow_to_pdf(input_path: Path, output_path: Path, custom_font_path: str = None):
     """
-    기존 고해상도 PDF를 불러와 100% 네이티브 벡터 방식으로
-    '고리' 이름표와 화살표를 추가하여 저장합니다.
+    기존 고해상도 PDF를 불러와 네이티브 벡터 방식으로
+    '고리' 이름표와 화살표를 추가하여 원본 해상도 100% 유지 상태로 저장합니다.
     """
     if not input_path.exists():
         logging.error(f"입력 파일을 찾을 수 없습니다: {input_path}")
         return
 
-    # 폰트 파일 경로 결정
+    # 폰트 파일 경로 확정
     font_path = custom_font_path or get_system_korean_font()
     if not font_path or not os.path.exists(font_path):
-        logging.error("사용 가능한 한글 폰트(.ttf) 파일을 찾지 못했습니다. Windows Fonts 경로를 확인해주세요.")
+        logging.error("사용 가능한 한글 폰트(.ttf) 파일을 찾지 못했습니다.")
         return
 
     try:
@@ -68,14 +68,14 @@ def add_label_and_arrow_to_pdf(input_path: Path, output_path: Path, custom_font_
             text_point = pymupdf.Point(text_x, text_y)
 
             # 화살표 설정
-            arrow_color = (0.1, 0.1, 0.1) # 화살표 색상 (짙은 회색/검은색)
+            arrow_color = (0.1, 0.1, 0.1) # 짙은 회색 / 검은색
             line_thickness = 1.8           # 선 두께
             
             arrow_start = pymupdf.Point(text_x + 15, text_y + 12) # 텍스트 아래쪽
             arrow_end = pymupdf.Point(width - 50, height - 50)     # 강아지 위치 방향
             # ==================================================================
 
-            # 1. 시스템 한글 폰트 동적 등록
+            # 1. 한글 폰트 동적 등록
             font_name = "KoreanFont"
             page.insert_font(fontname=font_name, fontfile=font_path)
             logging.info(f"폰트 적용 완료: {font_path}")
@@ -90,18 +90,18 @@ def add_label_and_arrow_to_pdf(input_path: Path, output_path: Path, custom_font_
             )
             logging.info(f"텍스트 '{text}' 삽입 완료 (좌표: {text_point})")
 
-            # 3. 화살표 벡터 그리기
+            # 3. 화살표 벡터 그리기 (arrows=2 는 끝부분 화살표 머리를 의미함)
             shape = page.new_shape()
             shape.draw_line(arrow_start, arrow_end)
             shape.finish(
                 width=line_thickness, 
                 color=arrow_color, 
-                arrows=pymupdf.ARROW_LAST
+                arrows=2  # 0:없음, 1:시작점, 2:끝점(ARROW_LAST), 3:양쪽
             )
             shape.commit()
-            logging.info("화살표 벡터 그린 후 동기화 완료")
+            logging.info("화살표 벡터 적용 완료")
 
-            # 4. 고해상도 품질 유지를 위한 PDF 최적화 저장
+            # 4. 고해상도 최적화 저장
             doc.save(output_path, garbage=4, deflate=True)
             logging.info(f"성공적으로 저장되었습니다: {output_path}")
 
