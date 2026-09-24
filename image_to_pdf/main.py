@@ -37,18 +37,46 @@ def find_input_file(base_dir: Path, target_name: str) -> Path:
 
     return None
 
+def remove_gemini_star_mark(img_bgr: np.ndarray) -> np.ndarray:
+    """
+    우측 하단 '고리(강아지)' 영역 주변의 별모양 아이콘을
+    자연스러운 배경 색상/질감으로 복원(Inpainting)합니다.
+    """
+    h, w, _ = img_bgr.shape
+    
+    # 우측 하단 강아지('고리') 관심 영역(ROI) 설정
+    y_min, y_max = int(h * 0.68), int(h * 0.95)
+    x_min, x_max = int(w * 0.72), int(w * 0.98)
+    
+    roi = img_bgr[y_min:y_max, x_min:x_max]
+    gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+    
+    # 별모양(밝은 하이라이트 요소) 영역 마스크 추출
+    _, bright_mask = cv2.threshold(gray_roi, 225, 255, cv2.THRESH_BINARY)
+    
+    # 마스크 영역 경계 확장 (자연스러운 합성 보정)
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    dilated_mask = cv2.dilate(bright_mask, kernel, iterations=2)
+    
+    # 전체 마스크에 ROI 영역 적용
+    full_mask = np.zeros((h, w), dtype=np.uint8)
+    full_mask[y_min:y_max, x_min:x_max] = dilated_mask
+    
+    # Telea 인페인팅 알고리즘으로 결함 제거 및 복원
+    inpainted_bgr = cv2.inpaint(img_bgr, full_mask, inpaintRadius=5, flags=cv2.INPAINT_TELEA)
+    return inpainted_bgr
+
 def enhance_text_and_details(img_rgb: np.ndarray) -> np.ndarray:
     """
-    카드 내 한글 텍스트 및 미세한 윤곽선 선명도를 업스케일링/샤프닝하는 보정 함수
+    텍스트 및 미세한 윤곽선 선명도를 업스케일링/샤프닝하는 보정 함수
     """
-    # 언샤프 마스킹(Unsharp Masking)을 통한 텍스트 및 윤곽선 선명화
     gaussian_blur = cv2.GaussianBlur(img_rgb, (0, 0), 2.0)
     sharpened = cv2.addWeighted(img_rgb, 1.4, gaussian_blur, -0.4, 0)
     return sharpened
 
 def convert_to_high_res_pdf(input_name: str, output_filename: str, target_dpi: int = 300) -> bool:
     """
-    원본 이미지의 디테일과 글자를 손실 없이 300 DPI 인쇄 등급 고해상도 PDF로 생성합니다.
+    별모양이 제거된 이미지를 300 DPI 인쇄 등급 초고화질 PDF로 생성합니다.
     """
     base_dir = Path(__file__).resolve().parent
     logging.info(f"작업 디렉토리: {base_dir}")
@@ -63,47 +91,51 @@ def convert_to_high_res_pdf(input_name: str, output_filename: str, target_dpi: i
     output_path = base_dir / output_filename
 
     try:
-        # 1. 한글 경로 대응 이미지 로드
+        # 1. 이미지 로드
         logging.info("고화질 이미지 데이터 로드 중...")
         img_array = np.fromfile(str(input_path), np.uint8)
         img_bgr = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
 
         if img_bgr is None:
-            raise ValueError("이미지 데이터를 정상적으로 읽을 수 없습니다.")
+            raise ValueError("이미지 데이터를 디코딩할 수 없습니다.")
 
-        img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+        # 2. 강아지('고리') 부근 별모양 아이콘 자동 제거
+        logging.info("우측 하단 강아지('고리') 주변 별모양 아이콘 복원 제거 처리 중...")
+        cleaned_bgr = remove_gemini_star_mark(img_bgr)
+
+        # RGB 변환
+        img_rgb = cv2.cvtColor(cleaned_bgr, cv2.COLOR_BGR2RGB)
         height, width, _ = img_rgb.shape
-        logging.info(f"원본 해상도: {width} x {height} px")
 
-        # 2. 텍스트 및 미세 윤곽선 선명화 필터 적용
-        logging.info("디테일 복원 및 텍스트 선명화 처리 중...")
+        # 3. 텍스트 및 상세 윤곽선 선명화
+        logging.info("텍스트 가독성 및 디테일 보정 처리 중...")
         enhanced_rgb = enhance_text_and_details(img_rgb)
 
-        # 3. 무손실 이미지 처리 (PIL)
+        # 4. 고해상도 무손실 임시 파일 저장
         pil_img = Image.fromarray(enhanced_rgb)
-        temp_png = base_dir / "_temp_highres.png"
+        temp_png = base_dir / "_temp_highres_cleaned.png"
         pil_img.save(temp_png, format="PNG", dpi=(target_dpi, target_dpi), optimize=True)
 
-        # 4. PDF Vector Canvas 생성 (인쇄용 규격 단위 1pt = 1/72 inch)
+        # 5. PDF Vector Canvas 생성 (인쇄용 규격 단위 1pt = 1/72 inch)
         pt_width = (width / target_dpi) * 72
         pt_height = (height / target_dpi) * 72
 
-        logging.info(f"300 DPI 초고화질 벡터 컨테이너 PDF 출력 중... ({pt_width:.2f}pt x {pt_height:.2f}pt)")
+        logging.info(f"300 DPI 고해상도 PDF 생성 중... ({pt_width:.2f}pt x {pt_height:.2f}pt)")
         pdf_canvas = canvas.Canvas(str(output_path), pagesize=(pt_width, pt_height))
         pdf_canvas.drawImage(str(temp_png), 0, 0, width=pt_width, height=pt_height)
         pdf_canvas.showPage()
         pdf_canvas.save()
 
-        # 5. 임시 파일 정리
+        # 임시 파일 정리
         if temp_png.exists():
             os.remove(temp_png)
 
-        logging.info(f"변환 성공! 깨짐 없는 고해상도 PDF가 생성되었습니다.")
+        logging.info(f"변환 성공! 별모양이 제거된 고해상도 PDF가 완료되었습니다.")
         logging.info(f"저장 경로: {output_path}")
         return True
 
     except Exception as e:
-        logging.exception(f"변환 중 오류가 발생했습니다: {e}")
+        logging.exception(f"변환 도중 오류가 발생했습니다: {e}")
         return False
 
 
@@ -112,12 +144,12 @@ if __name__ == "__main__":
     OUTPUT_FILENAME = "애드플랜터스_추석_인사_카드_highres.pdf"
 
     print("=" * 65)
-    print(" [Image2PDF] 손실 없는 초고화질 인쇄용 PDF 변환 프로세스 시작")
+    print(" [Image2PDF] 별모양 제거 및 300 DPI 초고화질 PDF 변환 시작")
     print("=" * 65)
 
     success = convert_to_high_res_pdf(INPUT_FILENAME, OUTPUT_FILENAME, target_dpi=300)
 
     if success:
-        print("\n[완료] 깨짐 없는 고해상도 PDF 변환이 완료되었습니다.")
+        print("\n[완료] 별모양이 깔끔하게 제거된 고해상도 PDF가 생성되었습니다.")
     else:
         print("\n[실패] 변환 도중 오류가 발생했습니다. 로그를 확인하세요.")
