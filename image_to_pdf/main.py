@@ -5,6 +5,7 @@ import os
 import sys
 import logging
 from pathlib import Path
+from datetime import datetime
 import cv2
 import numpy as np
 from PIL import Image
@@ -37,46 +38,18 @@ def find_input_file(base_dir: Path, target_name: str) -> Path:
 
     return None
 
-def remove_gemini_star_mark(img_bgr: np.ndarray) -> np.ndarray:
+def enhance_details(img_rgb: np.ndarray) -> np.ndarray:
     """
-    우측 하단 '고리(강아지)' 영역 주변의 별모양 아이콘을
-    자연스러운 배경 색상/질감으로 복원(Inpainting)합니다.
-    """
-    h, w, _ = img_bgr.shape
-    
-    # 우측 하단 강아지('고리') 관심 영역(ROI) 설정
-    y_min, y_max = int(h * 0.68), int(h * 0.95)
-    x_min, x_max = int(w * 0.72), int(w * 0.98)
-    
-    roi = img_bgr[y_min:y_max, x_min:x_max]
-    gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-    
-    # 별모양(밝은 하이라이트 요소) 영역 마스크 추출
-    _, bright_mask = cv2.threshold(gray_roi, 225, 255, cv2.THRESH_BINARY)
-    
-    # 마스크 영역 경계 확장 (자연스러운 합성 보정)
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-    dilated_mask = cv2.dilate(bright_mask, kernel, iterations=2)
-    
-    # 전체 마스크에 ROI 영역 적용
-    full_mask = np.zeros((h, w), dtype=np.uint8)
-    full_mask[y_min:y_max, x_min:x_max] = dilated_mask
-    
-    # Telea 인페인팅 알고리즘으로 결함 제거 및 복원
-    inpainted_bgr = cv2.inpaint(img_bgr, full_mask, inpaintRadius=5, flags=cv2.INPAINT_TELEA)
-    return inpainted_bgr
-
-def enhance_text_and_details(img_rgb: np.ndarray) -> np.ndarray:
-    """
-    텍스트 및 미세한 윤곽선 선명도를 업스케일링/샤프닝하는 보정 함수
+    텍스트 및 미세한 윤곽선 선명도를 업스케일링/샤프닝하는 보정 함수 (언샤프 마스킹)
     """
     gaussian_blur = cv2.GaussianBlur(img_rgb, (0, 0), 2.0)
     sharpened = cv2.addWeighted(img_rgb, 1.4, gaussian_blur, -0.4, 0)
     return sharpened
 
-def convert_to_high_res_pdf(input_name: str, output_filename: str, target_dpi: int = 300) -> bool:
+def create_framed_high_res_pdf(input_name: str, target_dpi: int = 300, padding_ratio: float = 0.08) -> bool:
     """
-    별모양이 제거된 이미지를 300 DPI 인쇄 등급 초고화질 PDF로 생성합니다.
+    이미지를 보정한 뒤, 넓은 흰색 캔버스(도화지) 위에 올려 프레임 효과를 주고
+    겹치지 않는 타임스탬프 파일명의 300 DPI 고해상도 PDF로 저장합니다.
     """
     base_dir = Path(__file__).resolve().parent
     logging.info(f"작업 디렉토리: {base_dir}")
@@ -88,10 +61,14 @@ def convert_to_high_res_pdf(input_name: str, output_filename: str, target_dpi: i
         return False
 
     logging.info(f"입력 파일 감지: {input_path.name}")
+    
+    # 겹치지 않는 새로운 파일명 생성 (타임스탬프 활용)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_filename = f"애드플랜터스_추석_인사_카드_framed_{timestamp}.pdf"
     output_path = base_dir / output_filename
 
     try:
-        # 1. 이미지 로드
+        # 1. 이미지 로드 (한글 경로 지원)
         logging.info("고화질 이미지 데이터 로드 중...")
         img_array = np.fromfile(str(input_path), np.uint8)
         img_bgr = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
@@ -99,26 +76,33 @@ def convert_to_high_res_pdf(input_name: str, output_filename: str, target_dpi: i
         if img_bgr is None:
             raise ValueError("이미지 데이터를 디코딩할 수 없습니다.")
 
-        # 2. 강아지('고리') 부근 별모양 아이콘 자동 제거
-        logging.info("우측 하단 강아지('고리') 주변 별모양 아이콘 복원 제거 처리 중...")
-        cleaned_bgr = remove_gemini_star_mark(img_bgr)
-
-        # RGB 변환
-        img_rgb = cv2.cvtColor(cleaned_bgr, cv2.COLOR_BGR2RGB)
-        height, width, _ = img_rgb.shape
-
-        # 3. 텍스트 및 상세 윤곽선 선명화
+        # RGB 변환 및 디테일 보정
+        img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
         logging.info("텍스트 가독성 및 디테일 보정 처리 중...")
-        enhanced_rgb = enhance_text_and_details(img_rgb)
+        enhanced_rgb = enhance_details(img_rgb)
 
-        # 4. 고해상도 무손실 임시 파일 저장
-        pil_img = Image.fromarray(enhanced_rgb)
-        temp_png = base_dir / "_temp_highres_cleaned.png"
-        pil_img.save(temp_png, format="PNG", dpi=(target_dpi, target_dpi), optimize=True)
+        # 2. Pillow를 이용한 넓은 흰색 도화지(캔버스) 프레임 추가
+        logging.info(f"넓은 흰색 도화지(여백 비율: {padding_ratio*100}%) 프레임 생성 중...")
+        original_pil = Image.fromarray(enhanced_rgb)
+        orig_w, orig_h = original_pil.size
+        
+        # 프레임이 추가된 새 캔버스 사이즈 계산
+        pad_x = int(orig_w * padding_ratio)
+        pad_y = int(orig_h * padding_ratio)
+        new_w = orig_w + (pad_x * 2)
+        new_h = orig_h + (pad_y * 2)
 
-        # 5. PDF Vector Canvas 생성 (인쇄용 규격 단위 1pt = 1/72 inch)
-        pt_width = (width / target_dpi) * 72
-        pt_height = (height / target_dpi) * 72
+        # 흰색 배경 캔버스 생성 후 원본 이미지 중앙에 부착
+        framed_img = Image.new("RGB", (new_w, new_h), "white")
+        framed_img.paste(original_pil, (pad_x, pad_y))
+
+        # 3. 고해상도 무손실 임시 파일 저장
+        temp_png = base_dir / f"_temp_framed_{timestamp}.png"
+        framed_img.save(temp_png, format="PNG", dpi=(target_dpi, target_dpi), optimize=True)
+
+        # 4. PDF Vector Canvas 생성 (인쇄용 규격 단위 1pt = 1/72 inch)
+        pt_width = (new_w / target_dpi) * 72
+        pt_height = (new_h / target_dpi) * 72
 
         logging.info(f"300 DPI 고해상도 PDF 생성 중... ({pt_width:.2f}pt x {pt_height:.2f}pt)")
         pdf_canvas = canvas.Canvas(str(output_path), pagesize=(pt_width, pt_height))
@@ -126,30 +110,34 @@ def convert_to_high_res_pdf(input_name: str, output_filename: str, target_dpi: i
         pdf_canvas.showPage()
         pdf_canvas.save()
 
-        # 임시 파일 정리
+        # 5. 리소스 및 임시 파일 정리
         if temp_png.exists():
             os.remove(temp_png)
 
-        logging.info(f"변환 성공! 별모양이 제거된 고해상도 PDF가 완료되었습니다.")
+        logging.info(f"변환 성공! 흰색 캔버스가 깔린 고해상도 PDF가 생성되었습니다.")
         logging.info(f"저장 경로: {output_path}")
         return True
 
     except Exception as e:
         logging.exception(f"변환 도중 오류가 발생했습니다: {e}")
+        # 예외 발생 시 생성된 임시 파일이 있다면 강제 삭제
+        temp_cleanup = base_dir / f"_temp_framed_{timestamp}.png"
+        if temp_cleanup.exists():
+            os.remove(temp_cleanup)
         return False
 
 
 if __name__ == "__main__":
     INPUT_FILENAME = "애드플랜터스_추석 인사 카드"
-    OUTPUT_FILENAME = "애드플랜터스_추석_인사_카드_highres.pdf"
 
     print("=" * 65)
-    print(" [Image2PDF] 별모양 제거 및 300 DPI 초고화질 PDF 변환 시작")
+    print(" [Image2PDF] 흰색 도화지 프레임 적용 & 고해상도 PDF 변환 시작")
     print("=" * 65)
 
-    success = convert_to_high_res_pdf(INPUT_FILENAME, OUTPUT_FILENAME, target_dpi=300)
+    # padding_ratio=0.08 은 원본 대비 8% 두께의 액자(여백)를 생성한다는 의미입니다.
+    success = create_framed_high_res_pdf(INPUT_FILENAME, target_dpi=300, padding_ratio=0.08)
 
     if success:
-        print("\n[완료] 별모양이 깔끔하게 제거된 고해상도 PDF가 생성되었습니다.")
+        print("\n[완료] 포스터 형식의 깔끔한 고해상도 PDF가 생성되었습니다.")
     else:
-        print("\n[실패] 변환 도중 오류가 발생했습니다. 로그를 확인하세요.")
+        print("\n[실패] 변환 도중 오류가 발생했습니다. 터미널 로그를 확인하세요.")
