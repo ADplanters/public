@@ -1,8 +1,6 @@
-# Dependencies: pip install pillow reportlab pdf2image opencv-python numpy tqdm pathlib
-# Also requires system package: poppler-utils (on Linux, use `sudo apt install poppler-utils`)
-
 import os
 import sys
+import math
 import logging
 from pathlib import Path
 from datetime import datetime
@@ -11,230 +9,173 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
-from reportlab.lib.utils import ImageReader
-from tqdm import tqdm
-import pdf2image
 
-# --- Configuration & Styling (Adjust as needed) ---
-# High Resolution Settings
-DPI = 600
-SAVE_QUALITY = 95
-PDF_SAVE_OPTIONS = {'optimize': True}
+# tqdm 미설치 시 기본 print 함수로 대체
+try:
+    from tqdm import tqdm
+except ImportError:
+    def tqdm(iterable, desc="", **kwargs):
+        print(f"--> {desc} 진행 중...")
+        return iterable
 
-# Font (MUST be provided by user or set to a system font, 
-# e.g., on macOS 'AppleGothic', on Windows 'Malgun Gothic', on Linux 'NanumGothic')
-# A characterful Korean font matching the 'cellup' reference is recommended.
-# Recommended: An open-source hand-written style font, e.g., 'Maplestory-Bold.ttf' or similar.
-KOREAN_FONT_PATH = "korean_font.ttf"  # Set path to a .ttf file in the same directory
-DEFAULT_FONT_PATH = "/System/Library/Fonts/Supplemental/Arial.ttf" # Fallback, no Korean
+# --- 기본 경로 및 설정 ---
+BASE_DIR = Path(__file__).resolve().parent
+OUTPUT_DIR = BASE_DIR / "output"
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-# Tag Positioning & Design (Tweaking may be necessary for perfect alignment)
-TAG_TEXT = "고리"
-TAG_FONT_SIZE = 48 # High-res points
-TAG_COLOR = (255, 255, 255)  # White text
-TAG_BG_COLOR = (240, 240, 240, 230) # Light grey, slight transparency
-TAG_PADDING = 15
-TAG_CORNER_RADIUS = 10
-
-# Based on a standard card layout, position dog's head vicinity. Adjust percentages.
-DOG_HEAD_POS_ESTIMATE = (0.72, 0.78) # (x, y) relative to PDF image width and height
-CONNECTOR_COLOR = (210, 210, 210) # Light grey connector
-CONNECTOR_THICKNESS = 4
-CONNECTOR_WOBBLE = 2 # Pixels of wobble for hand-drawn effect
-CONNECTOR_POINTS_COUNT = 5 # For a smooth curve
-
-# File Paths (relative to script root)
-INPUT_PDF_FILENAME = "애드플랜터스_추석_인사_카드_highres.pdf"
-REFERENCE_TAG_IMAGE = "20260924_200936.jpg" # Style reference
-OUTPUT_DIR_NAME = "output"
+DPI = 300  # 고해상도 출력 설정
+INPUT_PDF = BASE_DIR / "애드플랜터스_추석_인사_카드_highres.pdf"
 TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
-MODIFIED_PDF_FILENAME = f"modified_{INPUT_PDF_FILENAME.replace('.pdf', '')}_{TIMESTAMP}.pdf"
+OUTPUT_PDF = OUTPUT_DIR / f"modified_카드_{TIMESTAMP}.pdf"
 
-# --- Main Script ---
-def setup_logger(log_file: Path) -> logging.Logger:
-    logging.basicConfig(level=logging.INFO,
-                        format='%(asctime)s [%(levelname)s] %(message)s',
-                        handlers=[logging.FileHandler(log_file), logging.StreamHandler(sys.stdout)])
-    return logging.getLogger("gori_name_tag")
+# 로깅 설정
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
+logger = logging.getLogger("Image2PDF")
 
-def create_gori_tag(font_path: str, size: int, text: str, 
-                   color: Tuple[int, int, int], bg_color: Tuple[int, int, int, int], 
-                   padding: int, radius: int) -> Image.Image:
-    """Creates a stylized name tag based on parameters."""
-    try:
-        font = ImageFont.truetype(font_path, size)
-    except IOError:
-        logging.warning(f"Could not load font at {font_path}, using fallback.")
-        font = ImageFont.load_default()
-    
-    # Calculate text size
-    dummy_img = Image.new('RGBA', (1, 1))
-    draw = ImageDraw.Draw(dummy_img)
-    text_w, text_h = draw.textsize(text, font=font)
-    
-    # Calculate box size with padding
-    box_w = text_w + 2 * padding
-    box_h = text_h + 2 * padding
-    
-    # Create tag image
-    tag_img = Image.new('RGBA', (box_w, box_h), (0,0,0,0))
-    draw = ImageDraw.Draw(tag_img)
-    
-    # Draw rounded rectangle background
-    draw.rounded_rectangle([(0,0), (box_w, box_h)], radius, fill=bg_color)
-    
-    # Center and draw text
-    text_x = (box_w - text_w) // 2
-    text_y = (box_h - text_h) // 2
-    draw.text((text_x, text_y), text, font=font, fill=color)
-    
-    return tag_img
 
-def process_pdf():
-    # Setup
-    script_root = Path(__file__).parent
-    output_dir = script_root / OUTPUT_DIR_NAME
-    output_dir.mkdir(parents=True, exist_ok=True)
-    log_file = output_dir / f"log_{TIMESTAMP}.txt"
-    logger = setup_logger(log_file)
-    logger.info("Starting processing...")
-
-    # Validate inputs
-    input_pdf_path = script_root / INPUT_PDF_FILENAME
-    reference_image_path = script_root / REFERENCE_TAG_IMAGE
+def get_korean_font(size: int) -> ImageFont.FreeTypeFont:
+    """Windows/macOS 시스템 내 한글 폰트를 자동 탐색합니다."""
+    font_candidates = [
+        # 로컬 시스템 한글 폰트 목록
+        "C:/Windows/Fonts/malgun.ttf",       # Windows 맑은 고딕
+        "C:/Windows/Fonts/malgunbd.ttf",     # Windows 맑은 고딕 Bold
+        "C:/Windows/Fonts/batang.ttc",
+        "/System/Library/Fonts/Supplemental/AppleGothic.ttf", # macOS
+        "/usr/share/fonts/truetype/nanum/NanumGothic.ttf"     # Linux
+    ]
     
-    if not input_pdf_path.exists():
-        logger.error(f"Input PDF not found at {input_pdf_path}. Exiting.")
+    for font_path in font_candidates:
+        if os.path.exists(font_path):
+            try:
+                return ImageFont.truetype(font_path, size)
+            except Exception:
+                continue
+                
+    logger.warning("시스템 한글 폰트를 찾지 못해 기본 폰트로 대체합니다.")
+    return ImageFont.load_default()
+
+
+def draw_curved_arrow(draw: ImageDraw.ImageDraw, start: Tuple[int, int], end: Tuple[int, int], 
+                      control: Tuple[int, int], color: Tuple[int, int, int, int], width: int = 6):
+    """베지에 곡선(Bezier Curve) 기반의 휘어진 손그림 스타일 화살표 생성"""
+    points = []
+    # 곡선 점 생성
+    for t in [i / 50.0 for i in range(51)]:
+        x = (1 - t)**2 * start[0] + 2 * (1 - t) * t * control[0] + t**2 * end[0]
+        y = (1 - t)**2 * start[1] + 2 * (1 - t) * t * control[1] + t**2 * end[1]
+        points.append((x, y))
+        
+    # 곡선 그리기
+    for i in range(len(points) - 1):
+        draw.line([points[i], points[i+1]], fill=color, width=width)
+        
+    # 화살표 머리(Arrowhead) 생성
+    p1 = points[-2]
+    p2 = points[-1]
+    angle = math.atan2(p2[1] - p1[1], p2[0] - p1[0])
+    
+    arrow_length = width * 3.5
+    arrow_angle = math.pi / 6  # 30도
+    
+    left_x = p2[0] - arrow_length * math.cos(angle - arrow_angle)
+    left_y = p2[1] - arrow_length * math.sin(angle - arrow_angle)
+    right_x = p2[0] - arrow_length * math.cos(angle + arrow_angle)
+    right_y = p2[1] - arrow_length * math.sin(angle + arrow_angle)
+    
+    draw.polygon([p2, (left_x, left_y), (right_x, right_y)], fill=color)
+
+
+def add_gori_nametag(image: Image.Image) -> Image.Image:
+    """예시 이미지('셀럽') 스타일을 반영하여 흰색 텍스트+검은 테두리, 휘어진 화살표 추가"""
+    img_w, img_h = image.size
+    overlay = Image.new("RGBA", image.size, (255, 255, 255, 0))
+    draw = ImageDraw.Draw(overlay)
+    
+    # 폰트 사이즈 (이미지 해상도 비례)
+    font_size = int(img_h * 0.045)
+    font = get_korean_font(font_size)
+    
+    # 위치 지정 (오른쪽 하단 강아지 머리 근처)
+    # x: 72~85%, y: 70~85% 영역 기준
+    text = "고리"
+    text_x = int(img_w * 0.78)
+    text_y = int(img_h * 0.72)
+    
+    # 1. '고리' 글자 추가 (흰색 글자 + 두꺼운 검은색 테두리)
+    stroke_w = max(2, int(font_size * 0.08))
+    draw.text(
+        (text_x, text_y),
+        text,
+        font=font,
+        fill=(255, 255, 255, 255),
+        stroke_width=stroke_w,
+        stroke_fill=(0, 0, 0, 255)
+    )
+    
+    # 2. 휘어진 화살표 추가 ('고리' 오른쪽 하단에서 강아지 머리를 향하도록)
+    arrow_start = (text_x + int(font_size * 1.2), text_y + int(font_size * 0.9))
+    arrow_end = (text_x + int(font_size * 0.5), text_y + int(font_size * 2.2))
+    arrow_control = (text_x + int(font_size * 1.5), text_y + int(font_size * 1.8))
+    
+    # 테두리 검은색 화살표 (두껍게)
+    draw_curved_arrow(draw, arrow_start, arrow_end, arrow_control, color=(0, 0, 0, 255), width=stroke_w * 3)
+    # 내부 흰색 화살표
+    draw_curved_arrow(draw, arrow_start, arrow_end, arrow_control, color=(255, 255, 255, 255), width=stroke_w * 2)
+
+    return Image.alpha_composite(image.convert("RGBA"), overlay)
+
+
+def process():
+    if not INPUT_PDF.exists():
+        logger.error(f"입력 파일이 존재하지 않습니다: {INPUT_PDF}")
         sys.exit(1)
-    if not reference_image_path.exists():
-        logger.warning(f"Reference tag image not found at {reference_image_path}. Tag style will be generic.")
 
-    final_modified_pdf_path = output_dir / MODIFIED_PDF_FILENAME
-
+    logger.info("PDF 로딩 및 고해상도 변환 중...")
+    
     try:
-        # 1. Load PDF pages as high-res images
-        logger.info(f"Converting PDF {INPUT_PDF_FILENAME} at {DPI} DPI...")
-        with tqdm(desc="PDF conversion", unit="page") as pbar:
-            images = pdf2image.convert_from_path(input_pdf_path, dpi=DPI, thread_count=os.cpu_count(), fmt="png")
-            pbar.update(len(images))
-        
-        if not images:
-            logger.error("No pages converted.")
-            sys.exit(1)
-
-        main_image = images[0] # Assuming single page card
-        main_img_w, main_img_h = main_image.size
-        logger.info(f"Loaded page image size: {main_img_w}x{main_img_h}")
-
-        # 2. Create the "고리" tag
-        logger.info(f"Generating tag for '{TAG_TEXT}'...")
-        font_path = script_root / KOREAN_FONT_PATH
-        if not font_path.exists():
-            font_path = Path(DEFAULT_FONT_PATH)
-            logger.warning(f"Custom Korean font not found at {script_root / KOREAN_FONT_PATH}. Using fallback {DEFAULT_FONT_PATH}. Korean text will likely be broken or standard Arial.")
-            
-        gori_tag_image = create_gori_tag(str(font_path), TAG_FONT_SIZE, TAG_TEXT, TAG_COLOR, TAG_BG_COLOR, TAG_PADDING, TAG_CORNER_RADIUS)
-        tag_w, tag_h = gori_tag_image.size
-        logger.info(f"Tag image generated: {tag_w}x{tag_h}")
-
-        # 3. Placement calculation and final image composite
-        logger.info("Compositing tag onto card...")
-        
-        # Estimate dog position and tag placement. 
-        # Position slightly to the right and above the dog's head.
-        dog_head_x = int(DOG_HEAD_POS_ESTIMATE[0] * main_img_w)
-        dog_head_y = int(DOG_HEAD_POS_ESTIMATE[1] * main_img_h)
-        
-        tag_x_final = dog_head_x + 100
-        tag_y_final = dog_head_y - tag_h - 150
-        
-        # Ensure tag is on screen
-        tag_x_final = max(0, min(main_img_w - tag_w, tag_x_final))
-        tag_y_final = max(0, min(main_img_h - tag_h, tag_y_final))
-
-        # Composite the tag
-        main_image_rgba = main_image.convert("RGBA")
-        combined_image = Image.alpha_composite(main_image_rgba, Image.new("RGBA", main_image_rgba.size, (0,0,0,0)))
-        combined_image.paste(gori_tag_image, (tag_x_final, tag_y_final), gori_tag_image)
-        
-        # 4. Draw connecting curve (inspired by 'cellup' reference)
-        logger.info("Drawing hand-drawn style connecting curve...")
-        
-        # Define the path of the curve, adding jitter for wobble
-        control_points = [
-            (dog_head_x - 10, dog_head_y + 10), # Start near head
-            (dog_head_x + 50, dog_head_y - 30),
-            (tag_x_final - 30, tag_y_final + tag_h + 30),
-            (tag_x_final, tag_y_final + tag_h + 10) # End near tag
-        ]
-        
-        # Generate wobbly line segments
-        path = []
-        for i in range(len(control_points) - 1):
-            p1 = control_points[i]
-            p2 = control_points[i+1]
-            
-            # Subdivide and add noise
-            t = np.linspace(0, 1, CONNECTOR_POINTS_COUNT)
-            xs = (1-t) * p1[0] + t * p2[0]
-            ys = (1-t) * p1[1] + t * p2[1]
-            
-            # Add jitter to internal points
-            xs[1:-1] += np.random.randint(-CONNECTOR_WOBBLE, CONNECTOR_WOBBLE + 1, size=len(xs)-2)
-            ys[1:-1] += np.random.randint(-CONNECTOR_WOBBLE, CONNECTOR_WOBBLE + 1, size=len(ys)-2)
-            
-            segment_path = [(x, y) for x, y in zip(xs, ys)]
-            path.extend(segment_path[1:] if path else segment_path)
-
-        draw_combined = ImageDraw.Draw(combined_image)
-        # Draw varied-width small circles and connect for a continuous hand-drawn line
-        for j in range(len(path)-1):
-            radius = np.random.randint(CONNECTOR_THICKNESS-1, CONNECTOR_THICKNESS+1)
-            pt = path[j]
-            draw_combined.ellipse([pt[0]-radius, pt[1]-radius, pt[0]+radius, pt[1]+radius], fill=CONNECTOR_COLOR)
-            
-        # Draw final endpoint circle
-        radius = np.random.randint(CONNECTOR_THICKNESS-1, CONNECTOR_THICKNESS+1)
-        pt = control_points[-1]
-        draw_combined.ellipse([pt[0]-radius, pt[1]-radius, pt[0]+radius, pt[1]+radius], fill=CONNECTOR_COLOR)
-
-        # 5. Save final modified page to high-res PDF
-        logger.info(f"Saving modified high-resolution PDF at {final_modified_pdf_path}...")
-        c = canvas.Canvas(str(final_modified_pdf_path), pagesize=A4) 
-        width, height = A4
-        
-        # Calculate scaling to fit A4 while maintaining aspect ratio
-        img_w, img_h = combined_image.size
-        aspect_ratio = img_w / img_h
-        if aspect_ratio > (width / height):
-            draw_w = width
-            draw_h = width / aspect_ratio
-        else:
-            draw_h = height
-            draw_w = height * aspect_ratio
-        
-        x_centered = (width - draw_w) / 2
-        y_centered = (height - draw_h) / 2
-
-        # Convert PIL image to a ReportLab-usable temporary image
-        img_data = combined_image.convert("RGB")
-        img_buffer = os.path.join(output_dir, "temp_composite.png")
-        img_data.save(img_buffer, format="PNG", quality=SAVE_QUALITY, **PDF_SAVE_OPTIONS)
-        c.drawImage(img_buffer, x_centered, y_centered, width=draw_w, height=draw_h)
-        c.showPage()
-        c.save()
-        os.remove(img_buffer) # Clean temp file
-
-        # 6. Final success message and cleanup
-        logger.info("Process complete.")
-        for img in images:
-             if hasattr(img, 'filename') and img.filename:
-                 img.close()
-        print(f"\nSuccessfully created modified PDF: {final_modified_pdf_path}\nMake sure to provide 'korean_font.ttf' in the script directory for proper Korean text rendering.\nAdjust DOG_HEAD_POS_ESTIMATE and control_points if perfect positioning is needed.")
-
+        import pdf2image
+        images = pdf2image.convert_from_path(INPUT_PDF, dpi=DPI)
     except Exception as e:
-        logger.error(f"An error occurred: {e}")
+        logger.error(f"PDF를 이미지로 변환하는 중 오류 발생 (poppler 설치 여부 확인 필요): {e}")
         sys.exit(1)
+
+    processed_images = []
+    for i, img in enumerate(tqdm(images, desc="이름표 합성 작업")):
+        if i == 0:  # 첫 페이지 카드 작업
+            img_with_tag = add_gori_nametag(img)
+            processed_images.append(img_with_tag.convert("RGB"))
+        else:
+            processed_images.append(img)
+
+    # 고해상도 PDF 출력 저장
+    logger.info(f"결과 저장 중: {OUTPUT_PDF}")
+    temp_img_paths = []
+    
+    try:
+        c = canvas.Canvas(str(OUTPUT_PDF), pagesize=A4)
+        a4_w, a4_h = A4
+        
+        for idx, p_img in enumerate(processed_images):
+            temp_path = OUTPUT_DIR / f"temp_page_{idx}.png"
+            p_img.save(temp_path, "PNG", dpi=(DPI, DPI))
+            temp_img_paths.append(temp_path)
+            
+            # 비율 맞춤 A4 렌더링
+            c.drawImage(str(temp_path), 0, 0, width=a4_w, height=a4_h)
+            c.showPage()
+            
+        c.save()
+        logger.info("작업 완료!")
+    finally:
+        # 임시 이미지 정리
+        for tp in temp_img_paths:
+            if tp.exists():
+                os.remove(tp)
+
 
 if __name__ == "__main__":
-    process_pdf()
+    process()
