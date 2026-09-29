@@ -1,0 +1,239 @@
+import os
+
+def create_vector_slide_6():
+    output_filename = "Vector_Slide_6.html"
+    
+    html_content = """
+    <!DOCTYPE html>
+    <html lang="ko">
+    <head>
+        <meta charset="UTF-8">
+        <title>Vector Slide 6 - 맞춤형 마케팅 파트너십</title>
+        <style>
+            /* 1. 기본 폰트 세팅 (Pretendard) */
+            @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
+            
+            body { 
+                margin: 0; padding: 0; 
+                display: flex; justify-content: center; align-items: center; 
+                height: 100vh; background-color: #1a1a1a; 
+            }
+            
+            /* 2. 슬라이드 캔버스 (1280x720 16:9) */
+            .slide {
+                width: 1280px; height: 720px;
+                background: linear-gradient(135deg, #020012 0%, #060b26 40%, #0f103b 100%);
+                position: relative;
+                font-family: 'Pretendard', sans-serif;
+                color: #fff;
+                overflow: hidden;
+                box-shadow: 0 10px 30px rgba(0,0,0,0.8);
+            }
+            
+            /* 배경 네온 라인 (SVG) */
+            .bg-lines { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; opacity: 0.35; }
+            
+            /* 헤더 로고 & 페이지 번호 */
+            .header-logo { position: absolute; top: 25px; left: 50%; transform: translateX(-50%); text-align: center; z-index: 10; }
+            .logo-main { font-size: 24px; font-weight: 800; color: #ff8c00; letter-spacing: 2px; }
+            .logo-sub { font-size: 12px; font-weight: 400; color: #aaa; letter-spacing: 4px; display: block; margin-top: 3px; }
+            .page-num { position: absolute; top: 25px; right: 50px; font-size: 65px; font-weight: 900; color: rgba(255,255,255,0.2); z-index: 10; }
+            
+            /* 메인 슬로건 (상단 정중앙 2줄 배치) */
+            .title-center {
+                position: absolute; top: 110px; left: 50%; transform: translateX(-50%);
+                text-align: center; z-index: 10; width: 100%;
+            }
+            .title-1 { font-size: 48px; font-weight: 900; color: #ffffff; letter-spacing: -1px; text-shadow: 0 2px 10px rgba(0,0,0,0.8); margin-bottom: 6px; }
+            .title-2 { font-size: 48px; font-weight: 900; color: #ffffff; letter-spacing: -1px; text-shadow: 0 2px 10px rgba(0,0,0,0.8); }
+
+            /* 좌측 메세지 텍스트 */
+            .content-left { position: absolute; top: 270px; left: 90px; z-index: 10; }
+            .desc-line-1 { font-size: 30px; font-weight: 500; color: #d0d0d0; line-height: 1.4; margin-bottom: 8px; }
+            .desc-line-1 span { font-weight: 800; color: #ffffff; }
+            .divider-line { width: 320px; height: 2px; background: linear-gradient(90deg, #00e5ff, transparent); margin: 20px 0; }
+            .desc-line-2 { font-size: 34px; font-weight: 800; color: #00e5ff; text-shadow: 0 0 15px rgba(0, 229, 255, 0.4); }
+
+            /* ==================================================
+               우측 비즈니스 파트너십 & 분석 그래픽 그룹
+               ================================================== */
+            .mockup-group { position: absolute; top: 230px; right: 80px; width: 550px; height: 390px; z-index: 5; }
+            
+            /* 1. 태블릿 (마케팅 성과 리포트 대시보드) */
+            .tablet-dash {
+                width: 320px; height: 230px; background: #ffffff; border: 4px solid #2d3245; border-radius: 16px;
+                position: absolute; top: 10px; left: 20px; box-shadow: 0 15px 35px rgba(0,0,0,0.7); overflow: hidden;
+                padding: 12px; box-sizing: border-box; font-family: sans-serif;
+            }
+            .dash-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #eee; padding-bottom: 6px; margin-bottom: 8px; }
+            .dash-title { font-size: 10px; font-weight: 800; color: #111; }
+            .dash-badge { background: #e6fcf5; color: #0c85d0; font-size: 8px; font-weight: 800; padding: 2px 6px; border-radius: 4px; }
+            
+            .dash-body { display: flex; gap: 8px; height: 150px; }
+            .dash-chart-box { flex: 1.4; background: #f8f9fa; border-radius: 8px; padding: 8px; display: flex; flex-direction: column; justify-content: space-between; }
+            .chart-metric { font-size: 12px; font-weight: 900; color: #03c75a; }
+            .chart-metric span { font-size: 8px; color: #666; font-weight: 400; }
+            
+            .dash-side-box { flex: 1; display: flex; flex-direction: column; gap: 6px; }
+            .side-card { background: #f1f3f5; border-radius: 6px; padding: 6px; font-size: 8px; color: #333; }
+            .side-card-val { font-weight: 800; color: #1877f2; margin-top: 2px; }
+
+            /* 2. 스마트폰 (맞춤 진단 완료 앱) */
+            .phone-consult {
+                width: 170px; height: 310px; background: #090a0f; border: 3.5px solid #2d3245; border-radius: 28px;
+                position: absolute; top: 40px; right: 40px; z-index: 8;
+                box-shadow: -10px 15px 30px rgba(0,0,0,0.8); overflow: hidden; box-sizing: border-box;
+            }
+            .phone-screen {
+                width: 100%; height: 100%; background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%);
+                padding: 12px; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center;
+            }
+            .check-circle-icon {
+                width: 48px; height: 48px; background: #03c75a; border-radius: 50%; display: flex; justify-content: center; align-items: center;
+                box-shadow: 0 0 20px rgba(3, 199, 90, 0.6); margin-bottom: 12px;
+            }
+            .phone-app-title { font-size: 11px; font-weight: 800; color: #fff; margin-bottom: 4px; }
+            .phone-app-sub { font-size: 8px; color: #94a3b8; line-height: 1.3; }
+            
+            /* 3. 비즈니스 악수 (3D Handshake) 그래픽 카드 */
+            .handshake-card {
+                position: absolute; bottom: 15px; left: 130px; z-index: 12;
+                background: rgba(15, 23, 42, 0.85); backdrop-filter: blur(8px);
+                border: 1.5px solid rgba(0, 229, 255, 0.4); border-radius: 20px;
+                padding: 8px 18px; display: flex; align-items: center; gap: 10px;
+                box-shadow: 0 10px 25px rgba(0,0,0,0.6);
+            }
+            .handshake-emoji { font-size: 26px; }
+            .handshake-text { font-size: 10px; font-weight: 800; color: #ffffff; }
+
+            /* 4. 입체 플로팅 배지들 (Flag & Phone Call) */
+            .badge-flag {
+                position: absolute; top: -5px; right: 25px; z-index: 10;
+                width: 38px; height: 38px; background: linear-gradient(135deg, #00e5ff, #0072ff);
+                border-radius: 50%; display: flex; justify-content: center; align-items: center; font-size: 18px;
+                box-shadow: 0 5px 15px rgba(0,229,255,0.5); border: 2px solid #fff;
+            }
+            .badge-call {
+                position: absolute; bottom: 50px; left: -10px; z-index: 10;
+                width: 42px; height: 42px; background: linear-gradient(135deg, #a855f7, #6b21a8);
+                border-radius: 50%; display: flex; justify-content: center; align-items: center; font-size: 20px;
+                box-shadow: 0 5px 15px rgba(168,85,247,0.5); border: 2px solid #fff;
+            }
+
+            /* 하단 네온 버튼 */
+            .neon-button {
+                position: absolute; bottom: 45px; left: 50%; transform: translateX(-50%);
+                background: #060b26; border-radius: 40px; padding: 16px 50px;
+                font-size: 26px; font-weight: 700; color: white; z-index: 10;
+                box-shadow: 0 0 25px rgba(255, 0, 255, 0.6), inset 0 0 15px rgba(255, 0, 255, 0.3);
+                border: none; cursor: pointer;
+            }
+            .neon-button::before {
+                content: ''; position: absolute; top: -3px; left: -3px; right: -3px; bottom: -3px;
+                border-radius: 43px; background: linear-gradient(135deg, #ff69b4, #ff0080); z-index: -1;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="slide">
+            <!-- 1. 배경 그래픽 라인 (SVG) -->
+            <svg class="bg-lines">
+                <line x1="-100" y1="700" x2="1300" y2="0" stroke="#00ffff" stroke-width="2" />
+                <line x1="-100" y1="550" x2="1300" y2="-150" stroke="#9d4edd" stroke-width="1.5" />
+            </svg>
+            
+            <!-- 2. 헤더 로고 및 페이지 번호 -->
+            <div class="header-logo">
+                <div class="logo-main">ADPLANTERS</div>
+                <div class="logo-sub">GENTLE STUDIO</div>
+            </div>
+            <div class="page-num">6</div>
+            
+            <!-- 3. 메인 슬로건 (상단 정중앙 2줄) -->
+            <div class="title-center">
+                <div class="title-1">성공하는 브랜드의 뒤편엔</div>
+                <div class="title-2">항상 우리가 있습니다</div>
+            </div>
+            
+            <!-- 4. 좌측 메세지 텍스트 -->
+            <div class="content-left">
+                <div class="desc-line-1">지금, 우리 브랜드에 딱 맞는<br><span>맞춤형 마케팅 전략</span>을</div>
+                <div class="divider-line"></div>
+                <div class="desc-line-2">무료로 상담받아보세요.</div>
+            </div>
+            
+            <!-- 5. 우측 파트너십 & 분석 그래픽 그룹 -->
+            <div class="mockup-group">
+                
+                <!-- 플로팅 목표 깃발 배지 -->
+                <div class="badge-flag">🚩</div>
+                
+                <!-- 플로팅 전화 상담 배지 -->
+                <div class="badge-call">📞</div>
+                
+                <!-- 태블릿: 마케팅 성과 분석 리포트 -->
+                <div class="tablet-dash">
+                    <div class="dash-header">
+                        <div class="dash-title">BRAND GROWTH REPORT</div>
+                        <div class="dash-badge">실시간 연동</div>
+                    </div>
+                    <div class="dash-body">
+                        <div class="dash-chart-box">
+                            <div>
+                                <div style="font-size:8px; color:#888;">구매 전환율 / ROAS</div>
+                                <div class="chart-metric">450% ▲ <span>(+120%)</span></div>
+                            </div>
+                            <!-- 우상향 성과 그래프 SVG -->
+                            <svg viewBox="0 0 100 40" style="width:100%; height:50px;">
+                                <path d="M0 35 Q 25 30, 40 20 T 70 15 T 100 5 L 100 40 L 0 40 Z" fill="rgba(3,199,90,0.15)"></path>
+                                <path d="M0 35 Q 25 30, 40 20 T 70 15 T 100 5" fill="none" stroke="#03c75a" stroke-width="3.5" stroke-linecap="round"></path>
+                            </svg>
+                        </div>
+                        <div class="dash-side-box">
+                            <div class="side-card">
+                                <div>타겟 도달률</div>
+                                <div class="side-card-val">98.2%</div>
+                            </div>
+                            <div class="side-card">
+                                <div>매출 성장 세션</div>
+                                <div class="side-card-val">+3.5x</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 스마트폰: 1:1 진단 완료 UI -->
+                <div class="phone-consult">
+                    <div class="phone-screen">
+                        <div class="check-circle-icon">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3">
+                                <polyline points="20 6 9 17 4 12"></polyline>
+                            </svg>
+                        </div>
+                        <div class="phone-app-title">맞춤 전략 준비 완료</div>
+                        <div class="phone-app-sub">무료 진단 리포트가<br>생성되었습니다.</div>
+                    </div>
+                </div>
+
+                <!-- 비즈니스 파트너십 악수 바 -->
+                <div class="handshake-card">
+                    <span class="handshake-emoji">🤝</span>
+                    <span class="handshake-text">성공 마케팅 파트너십</span>
+                </div>
+
+            </div>
+            
+            <!-- 6. 하단 네온 버튼 (프로필 링크 클릭) -->
+            <button class="neon-button">문의하기 (프로필 링크 클릭)</button>
+        </div>
+    </body>
+    </html>
+    """
+
+    with open(output_filename, "w", encoding="utf-8") as f:
+        f.write(html_content)
+        
+    print(f"✅ 슬라이드 6 벡터 복원 완료! '{output_filename}' 파일이 생성되었습니다.")
+
+if __name__ == "__main__":
+    create_vector_slide_6()
