@@ -1,158 +1,83 @@
-"""
-=============================================================================
-의존성 라이브러리 설치:
-pip install pillow img2pdf python-dotenv
-=============================================================================
-"""
-
+import cv2
+import numpy as np
+from fpdf import FPDF
 import os
-import sys
-import logging
-from pathlib import Path
-from typing import Optional
 
-from PIL import Image, ImageEnhance, ImageFilter, ImageFont
-import img2pdf
-from dotenv import load_dotenv
+# 1. 파일 이름 설정
+input_image_path = 'image_0.png'  # 원본 이미지 파일명
+output_pdf_path = 'high_res_image_pdf.pdf'  # 출력 PDF 파일명
+model_path = 'fsrcnn_x4.pb'  # 다운로드한 초해상도 모델 파일명
+temp_image_path = 'temp_upscaled_image.png'  # 임시 이미지 파일명
 
-# 환경 변수 로드 (.env 파일 환경 대비)
-load_dotenv()
-
-# ---------------------------------------------------------------------------
-# 로깅 설정
-# ---------------------------------------------------------------------------
-logging.basicConfig(
-    level=logging.INFO,
-    format="[%(asctime)s] %(levelname)s: %(message)s",
-    datefmt="%H:%M:%S"
-)
-
-# ---------------------------------------------------------------------------
-# 안전한 시스템 폰트 로더 (Fallback 지원)
-# ---------------------------------------------------------------------------
-def load_system_font(font_size: int = 16) -> ImageFont.FreeTypeFont:
-    """
-    운영체제별 가용한 시스템 폰트를 탐색하여 안전하게 로드합니다.
-    """
-    candidate_fonts = [
-        "C:/Windows/Fonts/malgun.ttf",
-        "C:/Windows/Fonts/arial.ttf",
-        "/System/Library/Fonts/Supplemental/AppleGothic.ttf",
-        "/Library/Fonts/Arial.ttf",
-        "/usr/share/fonts/truetype/nanum/NanumGothic.ttf"
-    ]
-    for font_path in candidate_fonts:
-        if os.path.exists(font_path):
-            try:
-                return ImageFont.truetype(font_path, font_size)
-            except Exception:
-                continue
-    return ImageFont.load_default()
-
-# ---------------------------------------------------------------------------
-# 단일 이미지 고화질 디밸롭 & 300DPI PDF 변환 엔진
-# ---------------------------------------------------------------------------
-def process_single_image_to_pdf(
-    image_path: Path,
-    output_pdf_path: Path,
-    scale_factor: float = 3.0,
-    target_dpi: int = 300
-) -> bool:
-    """
-    1. Lanczos3 알고리즘으로 이미지 픽셀 밀도를 3배 확장
-    2. Unsharp Mask 정밀 필터 적용으로 텍스트 선명도 극대화
-    3. img2pdf 기반 300 DPI 무손실 PDF 인코딩
-    """
-    if not image_path.exists():
-        logging.error(f"[오류] 대상을 찾을 수 없습니다: {image_path.name}")
+# 2. 초해상도 모델 설정 및 이미지 업스케일링
+def upscale_image_dnn(input_path, output_path, model_path_local):
+    print(f"이미지 업스케일링 시작: {input_path}...")
+    
+    # 이미지 로드
+    image = cv2.imread(input_path)
+    if image is None:
+        print(f"에러: 이미지를 불러올 수 없습니다. 경로를 확인하세요: {input_path}")
         return False
 
-    temp_hd_path = image_path.parent / f"_temp_hd_{image_path.stem}.png"
+    # 초해상도 인스턴스 생성 및 모델 로드
+    sr = cv2.dnn_superres.DnnSuperResImpl_create()
+    sr.readModel(model_path_local)
+    
+    # 모델 이름 및 배율 설정
+    model_name = "fsrcnn" # FSRCNN_x4.pb 모델 이름
+    scale = 4 # FSRCNN_x4.pb 배율
 
-    try:
-        logging.info(f"-> '{image_path.name}' 고화질 디밸롭 보정 시작...")
-        
-        with Image.open(image_path) as img:
-            # 1. 색상 모드 최적화 (RGB 전환 및 투명도 배경 흰색 처리)
-            if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
-                bg = Image.new("RGB", img.size, (255, 255, 255))
-                if img.mode == "P":
-                    img = img.convert("RGBA")
-                bg.paste(img, mask=img.split()[3] if img.mode == "RGBA" else None)
-                img = bg
-            elif img.mode != "RGB":
-                img = img.convert("RGB")
+    sr.setModel(model_name, scale)
 
-            # 2. Lanczos 고밀도 리사이징 (해상도 3배 확장)
-            target_w = int(img.width * scale_factor)
-            target_h = int(img.height * scale_factor)
-            hd_img = img.resize((target_w, target_h), Image.Resampling.LANCZOS)
+    # 이미지 업스케일링
+    result = sr.upsample(image)
+    
+    # 결과 이미지 저장
+    cv2.imwrite(output_path, result)
+    print(f"이미지 업스케일링 완료: {output_path} (4x)")
+    return True
 
-            # 3. 텍스트 경계면 디테일 향상 (Unsharp Mask)
-            hd_img = hd_img.filter(
-                ImageFilter.UnsharpMask(radius=1.5, percent=170, threshold=2)
-            )
+# 3. PDF 생성 및 이미지 추가
+def create_pdf_from_image(input_image, output_pdf):
+    print(f"PDF 생성 시작: {output_pdf}...")
+    
+    # 이미지 크기 가져오기
+    image = cv2.imread(input_image)
+    height, width, channels = image.shape
+    
+    # PDF 인스턴스 생성 (이미지 크기에 맞게 A4 등 설정)
+    pdf = FPDF(unit = "pt", format = [width, height]) # 포인트 단위, 이미지 크기
+    pdf.add_page()
+    
+    # 이미지를 PDF 페이지 전체 크기로 추가
+    pdf.image(input_image, 0, 0, width, height)
+    
+    # PDF 저장
+    pdf.output(output_pdf)
+    print(f"PDF 생성 완료: {output_pdf}")
 
-            # 4. 대비 및 선명도 미세 조정
-            hd_img = ImageEnhance.Sharpness(hd_img).enhance(1.8)
-            hd_img = ImageEnhance.Contrast(hd_img).enhance(1.08)
-
-            # 5. 무손실 임시 이미지 저장
-            hd_img.save(temp_hd_path, format="PNG", compress_level=0, dpi=(target_dpi, target_dpi))
-            logging.info(f"   - 해상도 확장 완료: {img.width}x{img.height} px -> {hd_img.width}x{hd_img.height} px")
-
-        # 6. 무손실 PDF 생성
-        with open(output_pdf_path, "wb") as f:
-            f.write(img2pdf.convert(str(temp_hd_path)))
-
-        logging.info(f"[성공] 고화질 PDF 생성 완료: {output_pdf_path.name}")
-        return True
-
-    except Exception as e:
-        logging.error(f"[변환 실패] {image_path.name}: {e}")
-        return False
-
-    finally:
-        # 임시 가공 파일 정리
-        if temp_hd_path.exists():
-            try:
-                os.remove(temp_hd_path)
-            except Exception:
-                pass
-
-# ---------------------------------------------------------------------------
-# 메인 실행
-# ---------------------------------------------------------------------------
-def main():
-    base_dir = Path(__file__).parent.resolve()
-
-    # Slice 1 관련 전달받은 파일 탐색 (Slice 1_2.jpg, Slice 1.jpg, Slice 1.png 등)
-    candidate_names = ["Slice 1_2.jpg", "Slice 1.jpg", "Slice 1.png", "Slice 1_2.png"]
-    target_image_path: Optional[Path] = None
-
-    for name in candidate_names:
-        chk_path = base_dir / name
-        if chk_path.exists():
-            target_image_path = chk_path
-            break
-
-    # 파일명을 직접 지정하려면 아래 변수에 넣으셔도 됩니다.
-    if not target_image_path:
-        # 폴더 내 Slice 1로 시작하는 모든 이미지 탐색
-        for p in base_dir.glob("Slice 1*"):
-            if p.suffix.lower() in [".jpg", ".jpeg", ".png", ".webp"]:
-                target_image_path = p
-                break
-
-    if target_image_path:
-        output_pdf = base_dir / "Slice_1_MaxRes.pdf"
-        logging.info("==========================================")
-        logging.info(" Slice 1 최대 해상도 PDF 디밸롭 변환")
-        logging.info("==========================================")
-        process_single_image_to_pdf(target_image_path, output_pdf)
-        logging.info("==========================================")
-    else:
-        logging.error("폴더에 'Slice 1' 이미지가 존재하지 않습니다. 이미지 파일명을 확인해 주세요.")
-
+# --- 메인 실행 ---
 if __name__ == "__main__":
-    main()
+    # 모델 파일 존재 확인
+    if not os.path.exists(model_path):
+        print(f"에러: 초해상도 모델 파일을 찾을 수 없습니다. '{model_path}' 파일을 프로젝트 폴더에 저장해주세요.")
+        exit()
+
+    # 원본 이미지 파일 존재 확인
+    if not os.path.exists(input_image_path):
+        print(f"에러: 원본 이미지 파일을 찾을 수 없습니다. '{input_image_path}' 파일을 프로젝트 폴더에 저장해주세요.")
+        exit()
+
+    # 이미지 업스케일링 실행
+    if upscale_image_dnn(input_image_path, temp_image_path, model_path):
+        # PDF 생성 실행
+        create_pdf_from_image(temp_image_path, output_pdf_path)
+        
+        # 임시 파일 삭제
+        if os.path.exists(temp_image_path):
+            os.remove(temp_image_path)
+            print(f"임시 파일 삭제 완료: {temp_image_path}")
+        
+        print("모든 작업이 완료되었습니다. 고해상도 PDF 파일을 확인하세요.")
+    else:
+        print("이미지 업스케일링에 실패하여 PDF 생성을 중단합니다.")
