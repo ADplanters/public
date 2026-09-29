@@ -1,203 +1,106 @@
-# main.py
 import os
-import sys
 import logging
 from pathlib import Path
-import cv2
-import numpy as np
-from PIL import Image, ImageEnhance, ImageDraw, ImageFont
+from PIL import Image, ImageEnhance
+import img2pdf
 
-# ==========================================
-# 1. 로깅 및 환경 설정
-# ==========================================
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+# 로깅 설정
+logging.basicConfig(
+    level=logging.INFO,
+    format="[%(asctime)s] %(levelname)s: %(message)s",
+    datefmt="%H:%M:%S"
+)
 
-# 경로 설정 (현재 스크립트가 위치한 image_to_pdf 폴더 기준 절대 경로 유도)
-BASE_DIR = Path(__file__).resolve().parent
-OUTPUT_PDF = BASE_DIR / "optimized_high_res_output.pdf"
-
-# 처리할 파일 기본 이름 배열 (확장자는 jpg 또는 png 자동 탐색)
-FILE_BASE_NAME = "네이버 플레이스 순위상승의 핵심, 리뷰 쌓는 법 Q&A (영수증 리뷰 vs 블로그 리뷰) ({})"
-FILE_COUNT = 7
-
-# ==========================================
-# 2. 유틸리티 함수: 한글 경로 이미지 안전 로드 (Windows 환경 예외 처리)
-# ==========================================
-def read_image_safely(file_path):
-    try:
-        # cv2.imread는 경로에 한글이 포함될 경우 에러가 발생하므로 numpy를 거쳐 디코딩합니다.
-        with open(file_path, "rb") as stream:
-            bytes_array = bytearray(stream.read())
-            np_array = np.asarray(bytes_array, dtype=np.uint8)
-            cv_img = cv2.imdecode(np_array, cv2.IMREAD_COLOR)
-            return cv_img
-    except Exception as e:
-        logger.error(f"이미지 로드 중 오류 발생: {file_path} - {e}")
-        return None
-
-# ==========================================
-# 3. 유틸리티 함수: 시스템 폰트 안전 로드 (텍스트 및 레이아웃 요구사항)
-# ==========================================
-def get_system_fallback_font(font_size=20):
-    """OS별 기본 폰트를 안전하게 로드합니다."""
-    font_paths = [
-        "C:/Windows/Fonts/malgun.ttf",       # Windows 맑은 고딕
-        "/System/Library/Fonts/AppleGothic.ttf", # Mac 애플 고딕
-        "/usr/share/fonts/truetype/nanum/NanumGothic.ttf", # Linux 나눔고딕
-        "arial.ttf" # Fallback
-    ]
-    for path in font_paths:
-        try:
-            return ImageFont.truetype(path, font_size)
-        except IOError:
-            continue
-    # 폰트를 찾을 수 없는 경우 Pillow 기본 폰트 사용
-    return ImageFont.load_default()
-
-# ==========================================
-# 4. 코어 로직: 우측 하단 별모양 자국(워터마크) 제거 및 복원
-# ==========================================
-def remove_transparent_mark(cv_img):
+def apply_image_enhancements(img: Image.Image, sharpness: float = 1.0, contrast: float = 1.0, brightness: float = 1.0) -> Image.Image:
     """
-    우측 하단 영역(ROI)을 지정하여 반투명 흰색 자국을 제거하고 텍스트를 복원합니다.
+    이미지 품질을 자동으로 보정합니다. (기본값 1.0은 원본 유지)
     """
-    h, w = cv_img.shape[:2]
-    
-    # 우측 하단 ROI 영역 설정 (전체 너비의 우측 30%, 하단 20%)
-    roi_x, roi_y = int(w * 0.70), int(h * 0.80)
-    roi = cv_img[roi_y:h, roi_x:w]
-    
-    # 그레이스케일 변환 및 CLAHE(대비 제한 적응형 히스토그램 평활화) 적용
-    # -> 흰색 반투명 자국으로 인해 흐려진 텍스트의 대비를 극대화하여 복원
-    gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
-    enhanced_roi = clahe.apply(gray_roi)
-    
-    # 밝은 색(흰색 워터마크) 마스킹 처리 후 인페인팅 적용
-    # 텍스트(검은색)는 보호하고 밝은 영역(별모양)을 주변 픽셀로 덮어씌움
-    _, mask = cv2.threshold(gray_roi, 230, 255, cv2.THRESH_BINARY)
-    inpainted_roi = cv2.inpaint(roi, mask, inpaintRadius=3, flags=cv2.INPAINT_TELEA)
-    
-    # CLAHE 처리된 텍스트와 인페인팅 결과를 합성 (텍스트 선명도 유지)
-    # OpenCV 이미지를 다시 BGR 형태로 맞춤
-    enhanced_roi_bgr = cv2.cvtColor(enhanced_roi, cv2.COLOR_GRAY2BGR)
-    final_roi = cv2.addWeighted(inpainted_roi, 0.6, enhanced_roi_bgr, 0.4, 0)
-    
-    # 원본 이미지에 ROI 덮어쓰기
-    result_img = cv_img.copy()
-    result_img[roi_y:h, roi_x:w] = final_roi
-    
-    # Pillow Image 형식으로 변환 (BGR -> RGB)
-    rgb_img = cv2.cvtColor(result_img, cv2.COLOR_BGR2RGB)
-    return Image.fromarray(rgb_img)
-
-# ==========================================
-# 5. 코어 로직: 고해상도 이미지 보정 및 레이아웃 텍스트 추가
-# ==========================================
-def enhance_and_layout(pil_img, page_num):
-    """이미지의 선명도, 대비를 자동 보정하고 하단 중앙에 페이지 번호를 삽입합니다."""
-    # 1. 자동 보정 (선명도, 대비, 색상)
-    enhancer = ImageEnhance.Sharpness(pil_img)
-    img = enhancer.enhance(2.0) # 선명도 대폭 향상 (인쇄용)
-    
-    enhancer = ImageEnhance.Contrast(img)
-    img = enhancer.enhance(1.15) # 텍스트 가독성을 위한 대비 증가
-    
-    enhancer = ImageEnhance.Color(img)
-    img = enhancer.enhance(1.05) # 색조 미세 보정
-
-    # 2. 정밀한 텍스트 및 레이아웃 추가 (요구사항 충족)
-    draw = ImageDraw.Draw(img)
-    font = get_system_fallback_font(font_size=24)
-    text = f"- {page_num} -"
-    
-    # 하단 중앙 텍스트 좌표 자동 계산
-    img_w, img_h = img.size
-    # 최신 Pillow 버전의 텍스트 바운딩 박스 계산
-    try:
-        bbox = draw.textbbox((0, 0), text, font=font)
-        text_w = bbox[2] - bbox[0]
-        text_h = bbox[3] - bbox[1]
-    except AttributeError:
-        # 구버전 Pillow 폴백
-        text_w, text_h = draw.textsize(text, font=font)
-        
-    x = (img_w - text_w) / 2
-    y = img_h - text_h - 40 # 하단에서 40px 위로 배치
-    
-    # 텍스트에 약간의 반투명 배경(그림자) 효과를 주어 자연스럽게 합성
-    draw.rectangle([x-10, y-5, x+text_w+10, y+text_h+5], fill=(255, 255, 255, 180))
-    draw.text((x, y), text, font=font, fill=(50, 50, 50))
-    
+    if sharpness != 1.0:
+        enhancer = ImageEnhance.Sharpness(img)
+        img = enhancer.enhance(sharpness)
+    if contrast != 1.0:
+        enhancer = ImageEnhance.Contrast(img)
+        img = enhancer.enhance(contrast)
+    if brightness != 1.0:
+        enhancer = ImageEnhance.Brightness(img)
+        img = enhancer.enhance(brightness)
     return img
 
-# ==========================================
-# 6. 메인 실행 함수
-# ==========================================
-def main():
-    logger.info("이미지 로드 및 보정 작업을 시작합니다...")
-    processed_images = []
+def convert_single_image_to_pdf(image_path: Path, output_pdf_path: Path, auto_enhance: bool = False) -> bool:
+    """
+    이미지 재압축이나 해상도 저하(Resampling) 없이 1:1 고해상도 원본 그대로 PDF로 변환합니다.
+    """
+    if not image_path.exists():
+        logging.warning(f"파일을 찾을 수 없습니다: {image_path.name}")
+        return False
 
-    for i in range(1, FILE_COUNT + 1):
-        target_name = FILE_BASE_NAME.format(i)
-        
-        # 확장자 자동 탐색 (jpg, png)
-        file_path = None
-        for ext in [".jpg", ".png", ".jpeg"]:
-            candidate = BASE_DIR / f"{target_name}{ext}"
-            if candidate.exists():
-                file_path = candidate
-                break
+    try:
+        if auto_enhance:
+            # 이미지 보정 적용시 임시 바이너리로 가공 처리
+            with Image.open(image_path) as img:
+                if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
+                    img = img.convert("RGB")
                 
-        if not file_path:
-            logger.warning(f"파일을 찾을 수 없습니다, 건너뜁니다: {target_name}")
-            continue
+                enhanced_img = apply_image_enhancements(img, sharpness=1.1, contrast=1.05)
+                temp_enhanced_path = image_path.parent / f"_temp_{image_path.name}"
+                enhanced_img.save(temp_enhanced_path, format="PNG", compress_level=0)
+                
+                with open(output_pdf_path, "wb") as f:
+                    f.write(img2pdf.convert(str(temp_enhanced_path)))
+                
+                if temp_enhanced_path.exists():
+                    os.remove(temp_enhanced_path)
+        else:
+            # 원본 비트스트림 손실 없이 그대로 PDF 컨테이너 패킹 (최고 화질 보장)
+            with open(output_pdf_path, "wb") as f:
+                f.write(img2pdf.convert(str(image_path)))
 
-        logger.info(f"[{i}/{FILE_COUNT}] 파일 처리 중: {file_path.name}")
-        
+        logging.info(f"변환 완료 (고해상도 원본 유지): {image_path.name} -> {output_pdf_path.name}")
+        return True
+
+    except Exception as e:
+        logging.warning(f"img2pdf 엔진 실패 ({e}). Pillow 대체 엔진으로 전환합니다...")
         try:
-            # 1. 이미지 로드 (한글 경로 대응)
-            cv_img = read_image_safely(str(file_path))
-            if cv_img is None:
-                continue
+            with Image.open(image_path) as img:
+                if img.mode in ("RGBA", "P"):
+                    img = img.convert("RGB")
+                dpi = img.info.get("dpi", (300, 300))
+                img.save(output_pdf_path, "PDF", resolution=dpi[0])
+            logging.info(f"대체 엔진 변환 성공: {output_pdf_path.name}")
+            return True
+        except Exception as fallback_err:
+            logging.error(f"PDF 변환 실패 ({image_path.name}): {fallback_err}")
+            return False
 
-            # 2. 워터마크(별모양 자국) 제거 및 텍스트 복원
-            pil_img = remove_transparent_mark(cv_img)
+def main():
+    # 실행 위치와 상관없이 스크립트가 속한 폴더(image_to_pdf) 기준으로 경로 계산
+    base_dir = Path(__file__).parent.resolve()
+    
+    # Slice 1.png 부터 Slice 6.png 까지 대상 지정
+    slice_names = [f"Slice {i}.png" for i in range(1, 7)]
+    valid_image_paths = []
 
-            # 3. 이미지 보정 및 페이지 레이아웃 삽입
-            final_img = enhance_and_layout(pil_img, page_num=i)
-            
-            # 리소스 관리를 위해 메모리 할당 유지
-            processed_images.append(final_img)
-            
-        except Exception as e:
-            logger.error(f"이미지 {target_name} 처리 중 치명적 오류 발생: {e}")
+    logging.info("===== 이미지 -> 고해상도 PDF 변환 시작 =====")
 
-    # ==========================================
-    # 7. 고해상도 PDF 저장 (메모리 누수 방지 및 리소스 관리)
-    # ==========================================
-    if processed_images:
+    for name in slice_names:
+        img_file = base_dir / name
+        if img_file.exists():
+            pdf_file = base_dir / f"{img_file.stem}.pdf"
+            # auto_enhance=False : 원본 화질/색상 100% 보존
+            if convert_single_image_to_pdf(img_file, pdf_file, auto_enhance=False):
+                valid_image_paths.append(img_file)
+
+    # 6장 전체를 하나의 합본 PDF로도 생성
+    if valid_image_paths:
+        combined_pdf_path = base_dir / "Slice_All_Combined.pdf"
         try:
-            logger.info("고해상도 PDF 생성을 시작합니다...")
-            # 고해상도 유지를 위해 resolution 및 quality 옵션 세팅
-            processed_images[0].save(
-                OUTPUT_PDF,
-                "PDF",
-                resolution=300.0,
-                save_all=True,
-                append_images=processed_images[1:],
-                quality=100
-            )
-            logger.info(f"✅ PDF가 성공적으로 저장되었습니다: {OUTPUT_PDF}")
+            with open(combined_pdf_path, "wb") as f:
+                f.write(img2pdf.convert([str(p) for p in valid_image_paths]))
+            logging.info(f"전체 합본 PDF 생성 완료: {combined_pdf_path.name}")
         except Exception as e:
-            logger.error(f"PDF 저장 중 오류 발생: {e}")
-        finally:
-            # 리소스 정리 (명시적 메모리 릴리즈)
-            for img in processed_images:
-                img.close()
-    else:
-        logger.error("처리된 이미지가 없어 PDF를 생성하지 못했습니다.")
+            logging.error(f"합본 PDF 생성 실패: {e}")
+
+    logging.info("===== 모든 작업 완료 =====")
 
 if __name__ == "__main__":
     main()
