@@ -1,0 +1,252 @@
+import os
+
+def create_vector_slide_4():
+    output_filename = "Vector_Slide_4.html"
+    
+    html_content = """
+    <!DOCTYPE html>
+    <html lang="ko">
+    <head>
+        <meta charset="UTF-8">
+        <title>Vector Slide 4 - 인플루언서 팬덤 매칭</title>
+        <style>
+            /* 1. 기본 폰트 세팅 (Pretendard) */
+            @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
+            
+            body { 
+                margin: 0; padding: 0; 
+                display: flex; justify-content: center; align-items: center; 
+                height: 100vh; background-color: #1a1a1a; 
+            }
+            
+            /* 2. 슬라이드 캔버스 (1280x720 16:9) */
+            .slide {
+                width: 1280px; height: 720px;
+                background: linear-gradient(135deg, #020012 0%, #060b26 40%, #0f103b 100%);
+                position: relative;
+                font-family: 'Pretendard', sans-serif;
+                color: #fff;
+                overflow: hidden;
+                box-shadow: 0 10px 30px rgba(0,0,0,0.8);
+            }
+            
+            /* 배경 네온 빛 라인 (SVG) */
+            .bg-lines { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; opacity: 0.35; }
+            
+            /* 헤더 로고 & 페이지 번호 */
+            .header-logo { position: absolute; top: 25px; left: 50%; transform: translateX(-50%); text-align: center; z-index: 10; }
+            .logo-main { font-size: 24px; font-weight: 800; color: #ff8c00; letter-spacing: 2px; }
+            .logo-sub { font-size: 12px; font-weight: 400; color: #aaa; letter-spacing: 4px; display: block; margin-top: 3px; }
+            .page-num { position: absolute; top: 25px; right: 50px; font-size: 65px; font-weight: 900; color: rgba(255,255,255,0.2); z-index: 10; }
+            
+            /* 메인 슬로건 (상단 정중앙 배치) */
+            .title-center {
+                position: absolute; top: 115px; left: 50%; transform: translateX(-50%);
+                text-align: center; z-index: 10; width: 100%;
+            }
+            .title-1 { font-size: 48px; font-weight: 900; color: #ffffff; letter-spacing: -1px; text-shadow: 0 2px 10px rgba(0,0,0,0.8); margin-bottom: 6px; }
+            .title-2 { font-size: 48px; font-weight: 900; color: #ffffff; letter-spacing: -1px; text-shadow: 0 2px 10px rgba(0,0,0,0.8); }
+            
+            /* 좌측 가치 리스트 */
+            .content-left { position: absolute; top: 285px; left: 80px; z-index: 10; }
+            .desc-text { font-size: 24px; color: #d0d0d0; line-height: 1.5; margin-bottom: 30px; font-weight: 400; }
+            
+            .feature-item { display: flex; align-items: center; margin-bottom: 22px; }
+            .feature-icon {
+                width: 44px; height: 44px; background: rgba(0, 255, 255, 0.08); border: 1.5px solid #00e5ff;
+                border-radius: 12px; display: flex; justify-content: center; align-items: center;
+                margin-right: 16px; box-shadow: 0 0 12px rgba(0, 229, 255, 0.3);
+            }
+            .feature-text { font-size: 28px; font-weight: 700; color: #ffffff; letter-spacing: -0.5px; }
+
+            /* ==================================================
+               우측 3개 디바이스 목업 (인플루언서 비주얼 아트워크)
+               ================================================== */
+            .mockup-group { position: absolute; top: 255px; right: 50px; width: 560px; height: 390px; z-index: 5; }
+            
+            .phone-frame {
+                background: #090a0f; border: 3.5px solid #2d3245; border-radius: 32px;
+                box-shadow: 0 18px 35px rgba(0,0,0,0.75); overflow: hidden; position: absolute; box-sizing: border-box;
+            }
+
+            /* 폰 1: 좌측 (협찬 & 언박싱 리뷰) */
+            .phone-1 { width: 180px; height: 330px; top: 25px; left: 0; z-index: 2; transform: rotate(-7deg); }
+            .p1-screen {
+                width: 100%; height: 100%; background: linear-gradient(180deg, #2c1a4d 0%, #162447 100%);
+                padding: 10px; box-sizing: border-box; display: flex; flex-direction: column; justify-content: space-between; position: relative;
+            }
+            .p1-badge { background: #ff007f; color: white; font-size: 8px; font-weight: 800; padding: 3px 8px; border-radius: 10px; width: fit-content; }
+            .p1-card {
+                background: rgba(255,255,255,0.12); backdrop-filter: blur(5px); border: 1px solid rgba(255,255,255,0.2);
+                border-radius: 12px; padding: 10px; margin-top: 10px; text-align: center;
+            }
+            .p1-avatar { width: 42px; height: 42px; border-radius: 50%; background: #ffaa00; margin: 0 auto 6px; font-size: 22px; display: flex; align-items: center; justify-content: center; }
+            .p1-title { font-size: 10px; font-weight: 800; color: #fff; }
+            .p1-sub { font-size: 8px; color: #00e5ff; margin-top: 2px; }
+
+            /* 폰 2: 중앙 (라이브 방송 & 실시간 릴스 UI) */
+            .phone-2 { width: 200px; height: 360px; top: 0; left: 175px; z-index: 4; }
+            .p2-screen {
+                width: 100%; height: 100%; background: linear-gradient(180deg, #0f0c29 0%, #302b63 50%, #24243e 100%);
+                position: relative; padding: 10px; box-sizing: border-box; display: flex; flex-direction: column; justify-content: space-between;
+            }
+            .p2-header { display: flex; justify-content: space-between; align-items: center; }
+            .p2-live-tag { background: #ff0055; color: white; font-size: 8px; font-weight: 900; padding: 3px 8px; border-radius: 6px; }
+            .p2-viewers { font-size: 8px; color: rgba(255,255,255,0.8); background: rgba(0,0,0,0.5); padding: 2px 6px; border-radius: 6px; }
+            
+            .p2-center-graphic {
+                position: absolute; top: 55px; left: 50%; transform: translateX(-50%);
+                width: 120px; text-align: center;
+            }
+            .p2-influencer-avatar {
+                width: 58px; height: 58px; border-radius: 50%; background: linear-gradient(135deg, #a1c4fd 0%, #c2e9fb 100%);
+                border: 2px solid #fff; margin: 0 auto 6px; font-size: 28px; display: flex; align-items: center; justify-content: center;
+                box-shadow: 0 0 15px rgba(0,229,255,0.6);
+            }
+            .p2-stream-title { font-size: 10px; font-weight: 800; color: #fff; }
+            
+            /* 실시간 하트/댓글 애니메이션 가상 구현 */
+            .p2-chat-box { background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); border-radius: 8px; padding: 6px 8px; }
+            .p2-chat-item { font-size: 8px; color: #fff; margin-bottom: 3px; }
+            .p2-chat-user { color: #00e5ff; font-weight: 700; }
+
+            /* 폰 3: 우측 (진정성 있는 소통 & 팬덤 구축) */
+            .phone-3 { width: 180px; height: 330px; top: 25px; right: 0; z-index: 3; transform: rotate(6deg); }
+            .p3-screen {
+                width: 100%; height: 100%; background: #ffffff; padding: 10px; box-sizing: border-box;
+                display: flex; flex-direction: column; justify-content: space-between; font-family: sans-serif;
+            }
+            .p3-top-bar { font-size: 9px; font-weight: 900; color: #111; border-bottom: 1px solid #eee; padding-bottom: 6px; }
+            .p3-community-card { background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 8px; padding: 8px; margin-top: 8px; }
+            .p3-qna-title { font-size: 8px; font-weight: 800; color: #1877f2; margin-bottom: 4px; }
+            .p3-qna-text { font-size: 8px; color: #333; line-height: 1.3; font-weight: 600; }
+            .p3-stars { color: #ffb703; font-size: 9px; margin-top: 4px; }
+
+            /* 하단 네온 버튼 */
+            .neon-button {
+                position: absolute; bottom: 45px; left: 50%; transform: translateX(-50%);
+                background: #060b26; border-radius: 40px; padding: 16px 50px;
+                font-size: 26px; font-weight: 700; color: white; z-index: 10;
+                box-shadow: 0 0 25px rgba(255, 0, 255, 0.6), inset 0 0 15px rgba(255, 0, 255, 0.3);
+                border: none; cursor: pointer;
+            }
+            .neon-button::before {
+                content: ''; position: absolute; top: -3px; left: -3px; right: -3px; bottom: -3px;
+                border-radius: 43px; background: linear-gradient(135deg, #ff69b4, #ff0080); z-index: -1;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="slide">
+            <!-- 1. 배경 그래픽 라인 (SVG) -->
+            <svg class="bg-lines">
+                <line x1="-100" y1="700" x2="1300" y2="0" stroke="#00ffff" stroke-width="2" />
+                <line x1="-100" y1="550" x2="1300" y2="-150" stroke="#9d4edd" stroke-width="1.5" />
+            </svg>
+            
+            <!-- 2. 헤더 로고 및 페이지 번호 -->
+            <div class="header-logo">
+                <div class="logo-main">ADPLANTERS</div>
+                <div class="logo-sub">GENTLE STUDIO</div>
+            </div>
+            <div class="page-num">4</div>
+            
+            <!-- 3. 메인 슬로건 (상단 정중앙 2줄 배치) -->
+            <div class="title-center">
+                <div class="title-1">진정성 있는 확산</div>
+                <div class="title-2">자연스러운 팬덤을 만듭니다</div>
+            </div>
+            
+            <!-- 4. 좌측 포인트 리스트 -->
+            <div class="content-left">
+                <div class="desc-text">브랜드에 가장 잘 맞는<br>최적의 인플루언서 매칭으로</div>
+                
+                <!-- like 협찬 -->
+                <div class="feature-item">
+                    <div class="feature-icon">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#00e5ff" stroke-width="2.2">
+                            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                            <circle cx="9" cy="7" r="4"></circle>
+                            <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                            <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+                        </svg>
+                    </div>
+                    <div class="feature-text">like 협찬</div>
+                </div>
+                
+                <!-- genuine connection -->
+                <div class="feature-item">
+                    <div class="feature-icon">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#00e5ff" stroke-width="2.2">
+                            <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+                            <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+                            <circle cx="18" cy="4" r="3" fill="#00e5ff"></circle>
+                        </svg>
+                    </div>
+                    <div class="feature-text">genuine connection</div>
+                </div>
+            </div>
+            
+            <!-- 5. 우측 3종 디바이스 목업 (인플루언서 매칭 & 팬덤 아트워크) -->
+            <div class="mockup-group">
+                
+                <!-- 폰 1: 좌측 (인플루언서 협찬) -->
+                <div class="phone-frame phone-1">
+                    <div class="p1-screen">
+                        <div class="p1-badge">🎁 협찬 매칭 완료</div>
+                        <div class="p1-card">
+                            <div class="p1-avatar">👩🏻</div>
+                            <div class="p1-title">뷰티 인플루언서 민아</div>
+                            <div class="p1-sub">"솔직 사용후기 업로드"</div>
+                        </div>
+                        <div style="font-size:7px; color:#aaa; text-align:center;">진정성 있는 브랜딩 확산</div>
+                    </div>
+                </div>
+
+                <!-- 폰 2: 중앙 (라이브 & 릴스 방송) -->
+                <div class="phone-frame phone-2">
+                    <div class="p2-screen">
+                        <div class="p2-header">
+                            <span class="p2-live-tag">🔴 LIVE</span>
+                            <span class="p2-viewers">👁️ 3.2k</span>
+                        </div>
+                        <div class="p2-center-graphic">
+                            <div class="p2-influencer-avatar">👩🏻‍🦰</div>
+                            <div class="p2-stream-title">브랜드 앰버서더 라이브</div>
+                        </div>
+                        <div class="p2-chat-box">
+                            <div class="p2-chat-item"><span class="p2-chat-user">fan_01:</span> 이거 진짜 강추해요!!</div>
+                            <div class="p2-chat-item"><span class="p2-chat-user">love_me:</span> 오늘 바로 구매했습니다 ❤️</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 폰 3: 우측 (진정성 있는 커뮤니티 팬덤) -->
+                <div class="phone-frame phone-3">
+                    <div class="p3-screen">
+                        <div class="p3-top-bar">FANDOM COMMUNITY</div>
+                        <div class="p3-community-card">
+                            <div class="p3-qna-title">💬 브랜드 진정성 소통</div>
+                            <div class="p3-qna-text">"인플루언서 추천으로 알게 됐는데 평생 아이템 됐어요!"</div>
+                            <div class="p3-stars">★★★★★ 5.0</div>
+                        </div>
+                        <div style="font-size:7px; color:#666; text-align:center;">자연스러운 팬덤 형성</div>
+                    </div>
+                </div>
+
+            </div>
+            
+            <!-- 6. 하단 네온 버튼 -->
+            <button class="neon-button">지금 상담 시 무료 진단 제공</button>
+        </div>
+    </body>
+    </html>
+    """
+
+    with open(output_filename, "w", encoding="utf-8") as f:
+        f.write(html_content)
+        
+    print(f"✅ 슬라이드 4 벡터 복원 완료! '{output_filename}' 파일이 생성되었습니다.")
+
+if __name__ == "__main__":
+    create_vector_slide_4()
