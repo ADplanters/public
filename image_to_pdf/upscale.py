@@ -1,64 +1,37 @@
 import os
-import urllib.request
-import cv2
-from fpdf import FPDF
+from PIL import Image, ImageFilter, ImageEnhance
 
 # 파일 경로 설정
 input_image_path = 'Slice 1.png'        # 원본 이미지 파일명
-output_pdf_path = 'output_high_res.pdf' # 최종 출력될 PDF 파일명
-model_path = 'fsrcnn_x4.pb'             # 초해상도 AI 모델 파일명
-temp_image_path = 'temp_upscaled.png'    # 임시 저장 파일명
+output_pdf_path = 'output_high_res.pdf' # 최종 출력될 고해상도 PDF 파일명
 
-# AI 모델 다운로드 URL
-MODEL_URL = "https://raw.githubusercontent.com/opencv/opencv_extra/master/testdata/dnn/FSRCNN_x4.pb"
-
-def download_model_if_needed():
-    """모델 파일이 없으면 인터넷에서 자동으로 다운로드합니다."""
-    if not os.path.exists(model_path):
-        print("AI 모델 파일(fsrcnn_x4.pb)을 찾을 수 없어 자동으로 다운로드를 시작합니다...")
-        try:
-            urllib.request.urlretrieve(MODEL_URL, model_path)
-            print("모델 다운로드 완료!")
-        except Exception as e:
-            print(f"[오류] 모델 다운로드 실패: {e}")
-
-def run_upscale():
-    # 1. AI 모델 파일 체크 및 자동 다운로드
-    download_model_if_needed()
-
-    # 2. 원본 이미지 존재 여부 점검
+def upscale_to_pdf():
+    # 1. 원본 이미지 파일 존재 여부 확인
     if not os.path.exists(input_image_path):
-        print(f"[오류] 원본 이미지 파일('{input_image_path}')이 폴더에 없습니다.")
+        print(f"[오류] '{input_image_path}' 파일이 현재 폴더에 없습니다.")
         return
 
-    # 3. 이미지 로드 및 AI 업스케일링 (4배 확대)
-    print("1/3 이미지 고해상도 복원 중... (잠시만 기다려주세요)")
-    img = cv2.imread(input_image_path)
+    print("1/3 이미지를 불러오는 중...")
+    img = Image.open(input_image_path).convert('RGB')
+
+    # 2. 4배 고해상도 리사이징 (Lanczos 알고리즘 적용)
+    print("2/3 이미지 4배 확대 및 선명도 보정 작업 중...")
+    new_width = img.width * 4
+    new_height = img.height * 4
     
-    if img is None:
-        print(f"[오류] '{input_image_path}' 이미지를 읽을 수 없습니다.")
-        return
+    # Lanczos 필터로 고화질 확대
+    resized_img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
 
-    sr = cv2.dnn_superres.DnnSuperResImpl_create()
-    sr.readModel(model_path)
-    sr.setModel("fsrcnn", 4)
-    upscaled = sr.upsample(img)
-    
-    cv2.imwrite(temp_image_path, upscaled)
+    # 텍스트 및 도형 선명도(Unsharp Mask) 강화
+    sharpened_img = resized_img.filter(
+        ImageFilter.UnsharpMask(radius=2, percent=160, threshold=3)
+    )
 
-    # 4. 고해상도 이미지를 PDF로 변환
-    print("2/3 PDF 파일 생성 중...")
-    h, w, _ = upscaled.shape
-    pdf = FPDF(unit="pt", format=[w, h])
-    pdf.add_page()
-    pdf.image(temp_image_path, 0, 0, w, h)
-    pdf.output(output_pdf_path)
+    # 3. 고해상도(300 DPI) PDF 파일로 직접 출력 및 저장
+    print("3/3 고해상도 PDF 파일 생성 중...")
+    sharpened_img.save(output_pdf_path, "PDF", resolution=300.0)
 
-    # 5. 임시 파일 정리
-    if os.path.exists(temp_image_path):
-        os.remove(temp_image_path)
-        
-    print(f"3/3 완료! '{output_pdf_path}' 고해상도 PDF 파일이 생성되었습니다.")
+    print(f"\n성공! '{output_pdf_path}' 고해상도 PDF가 생성되었습니다.")
 
 if __name__ == "__main__":
-    run_upscale()
+    upscale_to_pdf()
